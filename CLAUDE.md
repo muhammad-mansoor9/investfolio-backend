@@ -115,6 +115,22 @@ Routes that need auth use `auth:api` middleware (Passport token). Most data-read
 2. Add route in `routes/api.php` (public block or `auth:api` group)
 3. Register controller `use` at top of `api.php`
 
+## Documentation Rules
+
+**Do not create `.md` files unless explicitly asked.** This includes:
+- Analysis summaries
+- Fix documentation  
+- Review findings
+- Implementation guides
+
+**Why**: Scattered markdown files become outdated, duplicate information from code/commit messages, and clutter the repo. CLAUDE.md is the single source of truth for project guidance.
+
+**Where documentation belongs**:
+- Code comments (for non-obvious WHY)
+- Commit messages (for context on changes)
+- CLAUDE.md (for project rules and guidelines)
+- Code itself (self-documenting names)
+
 ## Environment Variables (key ones)
 
 ```env

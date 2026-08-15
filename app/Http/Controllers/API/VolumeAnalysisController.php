@@ -25,7 +25,6 @@ class VolumeAnalysisController extends Controller
                 'end_date' => 'required|date|after_or_equal:start_date',
                 'min_float' => 'nullable|numeric|min:0',
                 'max_float' => 'nullable|numeric|min:0',
-                'shariah_only' => 'nullable|in:true,false,1,0',
             ]);
 
             if ($validator->fails()) {
@@ -37,7 +36,6 @@ class VolumeAnalysisController extends Controller
             $endDate = $request->get('end_date');
             $minFloat = $request->get('min_float', 10); // Default 10
             $maxFloat = $request->get('max_float', 100); // Default 100
-            $shariahOnly = filter_var($request->get('shariah_only', false), FILTER_VALIDATE_BOOLEAN);
 
             // Validate min < max
             if ($minFloat >= $maxFloat) {
@@ -45,9 +43,9 @@ class VolumeAnalysisController extends Controller
             }
 
             if ($type === 'stocks') {
-                return $this->getStockVolumeSummary($startDate, $endDate, $minFloat, $maxFloat, $shariahOnly);
+                return $this->getStockVolumeSummary($startDate, $endDate, $minFloat, $maxFloat);
             } else {
-                return $this->getSectorVolumeSummary($startDate, $endDate, $minFloat, $maxFloat, $shariahOnly);
+                return $this->getSectorVolumeSummary($startDate, $endDate, $minFloat, $maxFloat);
             }
 
         } catch (\Exception $e) {
@@ -58,24 +56,18 @@ class VolumeAnalysisController extends Controller
     /**
      * Get volume summary for stocks
      */
-    private function getStockVolumeSummary($startDate, $endDate, $minFloat, $maxFloat, $shariahOnly): JsonResponse
+    private function getStockVolumeSummary($startDate, $endDate, $minFloat, $maxFloat): JsonResponse
     {
         // First get stocks in the free_float range
-        $validStockIdsQuery = DB::table('stocks')
+        $validStockIds = DB::table('stocks')
             ->select('id')
             ->where('is_active', true)
             ->where('market_cap', '>', 0)
             ->whereNotNull('free_float')
             ->whereNotNull('total_shares_outstanding')
             ->where('total_shares_outstanding', '>', 0)
-            ->whereRaw('(CAST(free_float AS DECIMAL(20,2)) / CAST(total_shares_outstanding AS DECIMAL(20,2))) * 100 BETWEEN ? AND ?', [$minFloat, $maxFloat]);
-
-        // Add shariah filter if requested
-        if ($shariahOnly) {
-            $validStockIdsQuery->where('is_shariah', true);
-        }
-
-        $validStockIds = $validStockIdsQuery->pluck('id');
+            ->whereRaw('(CAST(free_float AS DECIMAL(20,2)) / CAST(total_shares_outstanding AS DECIMAL(20,2))) * 100 BETWEEN ? AND ?', [$minFloat, $maxFloat])
+            ->pluck('id');
 
         // Get aggregated volume data per stock with free_float % filter
         $stocksData = DB::table('stock_prices as sp')
@@ -251,24 +243,18 @@ class VolumeAnalysisController extends Controller
     /**
      * Get volume summary for sectors
      */
-    private function getSectorVolumeSummary($startDate, $endDate, $minFloat, $maxFloat, $shariahOnly): JsonResponse
+    private function getSectorVolumeSummary($startDate, $endDate, $minFloat, $maxFloat): JsonResponse
     {
         // First get stocks in the free_float range
-        $validStockIdsQuery = DB::table('stocks')
+        $validStockIds = DB::table('stocks')
             ->select('id')
             ->where('is_active', true)
             ->where('market_cap', '>', 0)
             ->whereNotNull('free_float')
             ->whereNotNull('total_shares_outstanding')
             ->where('total_shares_outstanding', '>', 0)
-            ->whereRaw('(CAST(free_float AS DECIMAL(20,2)) / CAST(total_shares_outstanding AS DECIMAL(20,2))) * 100 BETWEEN ? AND ?', [$minFloat, $maxFloat]);
-
-        // Add shariah filter if requested
-        if ($shariahOnly) {
-            $validStockIdsQuery->where('is_shariah', true);
-        }
-
-        $validStockIds = $validStockIdsQuery->pluck('id');
+            ->whereRaw('(CAST(free_float AS DECIMAL(20,2)) / CAST(total_shares_outstanding AS DECIMAL(20,2))) * 100 BETWEEN ? AND ?', [$minFloat, $maxFloat])
+            ->pluck('id');
 
         // Get aggregated volume data per sector with free_float % filter
         $sectorsData = DB::table('stock_prices as sp')

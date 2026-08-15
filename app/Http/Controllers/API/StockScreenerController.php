@@ -4,50 +4,43 @@ namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
 use App\Services\StockScreenerService;
+use App\Services\StockPriceService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\ValidationException;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 
-/**
- * Stock Screener Controller
- *
- * Handles stock screening and filtering operations
- */
 class StockScreenerController extends Controller
 {
-    private StockScreenerService $screenerService;
+    private const KEY_LATEST_PRICE = 'latest_price';
+    private const KEY_RATIOS = 'ratios';
+    private const KEY_SYMBOL = 'symbol';
+    private const KEY_ID = 'id';
+    private const KEY_SECTOR_AVERAGE = 'sector_average';
 
-    public function __construct(StockScreenerService $screenerService)
-    {
+    private StockScreenerService $screenerService;
+    private StockPriceService $priceService;
+
+    public function __construct(
+        StockScreenerService $screenerService,
+        StockPriceService $priceService
+    ) {
         $this->screenerService = $screenerService;
+        $this->priceService = $priceService;
     }
 
-    /**
-     * Get screener data for a specific sector
-     *
-     * GET /api/screener/data?sector_id=xxx
-     *
-     * Returns:
-     * - sector: Basic sector info
-     * - stocks: Array of stocks with all their ratios + latest price
-     * - sector_averages: Average values for each ratio
-     */
     public function getData(Request $request): JsonResponse
     {
         try {
-            // Validate request
             $validated = $request->validate([
                 'sector_id' => 'required|uuid|exists:sectors,id'
             ]);
 
             $sectorId = $validated['sector_id'];
-
             Log::info('Fetching screener data', ['sector_id' => $sectorId]);
 
-            // Get data from service
             $rawData = $this->screenerService->getScreenerData($sectorId);
-
-            // Transform to clean flat structure with latest prices
             $data = $this->transformData($rawData);
 
             Log::info('Screener data fetched successfully', [
@@ -55,21 +48,29 @@ class StockScreenerController extends Controller
                 'stocks_count' => count($data['stocks'])
             ]);
 
+            $sanitizedData = $this->sanitizeData($data);
+
             return response()->json([
                 'success' => true,
                 'message' => 'Screener data retrieved successfully',
-                'data' => $data
+                'data' => $sanitizedData
             ]);
 
-        } catch (\Illuminate\Validation\ValidationException $e) {
+        } catch (ValidationException $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Validation failed',
                 'errors' => $e->errors()
             ], 422);
 
+        } catch (ModelNotFoundException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Sector not found'
+            ], 404);
+
         } catch (\Exception $e) {
-            Log::error('Failed to fetch screener data', [
+            Log::error('Screener data fetch failed', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
@@ -82,63 +83,48 @@ class StockScreenerController extends Controller
         }
     }
 
-    /**
-     * Transform nested service data to clean flat structure
-     *
-     * Input: Complex nested structure with stocks repeated per category
-     * Output: Simple structure with each stock appearing once + latest price
-     */
     private function transformData(array $rawData): array
     {
         $stocksById = [];
         $sectorAverages = [];
 
-        // Process each category from service response
         foreach ($rawData['categories'] as $category) {
-            // Collect sector averages
-            foreach ($category['sector_average'] as $ratioName => $value) {
+            foreach ($category[self::KEY_SECTOR_AVERAGE] as $ratioName => $value) {
                 $sectorAverages[$ratioName] = $value;
             }
 
-            // Merge stock data
             foreach ($category['data'] as $stockData) {
                 $stockId = $stockData['stock_id'];
 
-                // Initialize stock on first encounter
                 if (!isset($stocksById[$stockId])) {
                     $stocksById[$stockId] = [
-                        'id' => $stockId,
-                        'symbol' => $stockData['symbol'],
+                        self::KEY_ID => $stockId,
+                        self::KEY_SYMBOL => $stockData[self::KEY_SYMBOL],
                         'name' => $stockData['description'],
                         'is_shariah' => $stockData['is_shariah'] ?? false,
                         'market_cap' => $stockData['market_cap'] ?? null,
-                        'latest_price' => null, // Will be populated below
-                        'ratios' => []
+                        self::KEY_LATEST_PRICE => null,
+                        self::KEY_RATIOS => []
                     ];
                 }
 
-                // Merge ratios from this category
-                $stocksById[$stockId]['ratios'] = array_merge(
-                    $stocksById[$stockId]['ratios'],
-                    $stockData['ratios']
+                $stocksById[$stockId][self::KEY_RATIOS] = array_merge(
+                    $stocksById[$stockId][self::KEY_RATIOS],
+                    $stockData[self::KEY_RATIOS]
                 );
             }
         }
 
-        // Load latest prices for all stocks
         $stockIds = array_keys($stocksById);
         $latestPrices = $this->getLatestPrices($stockIds);
 
-        // Add latest prices to stocks
         foreach ($stocksById as $stockId => &$stockData) {
             if (isset($latestPrices[$stockId])) {
-                $stockData['latest_price'] = $latestPrices[$stockId];
+                $stockData[self::KEY_LATEST_PRICE] = $latestPrices[$stockId];
             }
         }
 
-        // Convert to indexed array and sort alphabetically by symbol
         $stocks = array_values($stocksById);
-        usort($stocks, fn($a, $b) => strcmp($a['symbol'], $b['symbol']));
 
         return [
             'sector' => $rawData['sector'],
@@ -151,31 +137,18 @@ class StockScreenerController extends Controller
         ];
     }
 
-    /**
-     * Get latest prices for multiple stocks efficiently
-     *
-     * @param array $stockIds
-     * @return array [stock_id => price_data]
-     */
     private function getLatestPrices(array $stockIds): array
     {
         if (empty($stockIds)) {
             return [];
         }
 
-        // Get latest price for each stock in one query
-        $prices = \DB::table('stock_prices')
-            ->select('stock_id', 'close', 'date', 'change')
-            ->whereIn('stock_id', $stockIds)
-            ->whereIn('id', function ($query) use ($stockIds) {
-                $query->select(\DB::raw('MAX(id)'))
-                    ->from('stock_prices')
-                    ->whereIn('stock_id', $stockIds)
-                    ->groupBy('stock_id');
-            })
+        $prices = \DB::table('stock_prices as sp')
+            ->select('sp.stock_id', 'sp.close', 'sp.date', 'sp.change')
+            ->whereIn('sp.stock_id', $stockIds)
+            ->whereRaw('sp.date = (SELECT MAX(date) FROM stock_prices sp2 WHERE sp2.stock_id = sp.stock_id)')
             ->get();
 
-        // Map by stock_id
         $priceMap = [];
         foreach ($prices as $price) {
             $priceMap[$price->stock_id] = [
@@ -186,5 +159,20 @@ class StockScreenerController extends Controller
         }
 
         return $priceMap;
+    }
+
+    private function sanitizeData(array $data): array
+    {
+        return array_map(function($item) {
+            if (is_array($item)) {
+                return $this->sanitizeData($item);
+            }
+            if (is_float($item)) {
+                if (is_infinite($item) || is_nan($item)) {
+                    return null;
+                }
+            }
+            return $item;
+        }, $data);
     }
 }

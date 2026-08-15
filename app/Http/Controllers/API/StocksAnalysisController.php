@@ -24,7 +24,6 @@ class StocksAnalysisController extends BaseController
         try {
             $validator = Validator::make($request->all(), [
                 'sector_id' => 'sometimes|uuid',
-                'shariah_compliant' => 'sometimes|boolean',
                 'identifiers' => 'sometimes|array',
                 'identifiers.*' => 'string',
                 'limit' => 'sometimes|integer|min:1|max:1000'
@@ -35,7 +34,6 @@ class StocksAnalysisController extends BaseController
             }
 
             $sectorId = $request->get('sector_id');
-            $shariahCompliant = $request->get('shariah_compliant');
             $identifiers = $request->get('identifiers', self::DEFAULT_IDENTIFIERS);
             $limit = $request->get('limit', 100);
 
@@ -66,10 +64,6 @@ class StocksAnalysisController extends BaseController
             // Apply filters
             if ($sectorId) {
                 $query->where('s.sector_id', $sectorId);
-            }
-
-            if ($shariahCompliant !== null) {
-                $query->where('s.is_shariah', $shariahCompliant);
             }
 
             $data = $query->limit($limit)->get();

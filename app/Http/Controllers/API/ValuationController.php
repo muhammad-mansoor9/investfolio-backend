@@ -4,6 +4,7 @@ namespace App\Http\Controllers\API;
 
 use App\Models\SavedValuation;
 use App\Models\Stock;
+use App\Services\SectorPEService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -81,8 +82,11 @@ class ValuationController extends BaseController
                 $ttmDividendYield = ($ttmDps / $currentPrice) * 100;
             }
 
-            // Calculate sector PE
-            $sectorPe = $this->calculateSectorPE($stock->sector_id);
+            // Get sector PE metrics from service
+            $sectorPEMetrics = SectorPEService::calculateAll(now()->toDateString());
+            $sectorMetrics = $sectorPEMetrics[$stock->sector_id] ?? [];
+            $sectorPe = $sectorMetrics['sector_pe'] ?? 15; // Default to 15 if not available
+            $sectorTopPe = $sectorMetrics['sector_top_pe'] ?? null;
 
             // Calculate PE multiples
             $forwardPe = $currentPrice > 0 && $forecastEps > 0 ? $currentPrice / $forecastEps : 0;
@@ -145,6 +149,7 @@ class ValuationController extends BaseController
                 'metrics' => [
                     'forward_pe' => round($forwardPe, 2),
                     'sector_pe' => round($sectorPe, 2),
+                    'sector_top_pe' => $sectorTopPe ? round($sectorTopPe, 2) : null,
                     'eps_growth_pct' => $epsGrowthPct ? round($epsGrowthPct, 2) : null,
                     'is_forward_pe_cheap' => $forwardPe < $sectorPe,
                 ],

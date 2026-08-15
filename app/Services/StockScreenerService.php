@@ -16,28 +16,32 @@ class StockScreenerService
         $this->ratioCalculator = $ratioCalculator;
     }
 
-    /**
-     * Get complete screener data for a sector
-     *
-     * @param string $sectorId
-     * @return array
-     */
     public function getScreenerData(string $sectorId): array
     {
-        // Get sector with relationships
+        $cacheKey = "screener:sector:{$sectorId}";
+        $cached = \Illuminate\Support\Facades\Cache::get($cacheKey);
+
+        if ($cached) {
+            \Illuminate\Support\Facades\Log::debug('Screener cache hit', ['sector_id' => $sectorId]);
+            return $cached;
+        }
+
         $sector = Sector::with(['activeStocks' => function($query) {
             $query->orderBy('symbol', 'asc');
         }])->findOrFail($sectorId);
 
         if ($sector->activeStocks->isEmpty()) {
-            return [
+            $result = [
                 'sector' => [
                     'id' => $sector->id,
                     'name' => $sector->name,
                 ],
                 'stocks_count' => 0,
-                'message' => 'No active stocks found in this sector',
+                'categories' => [],
             ];
+
+            \Illuminate\Support\Facades\Cache::put($cacheKey, $result, 86400);
+            return $result;
         }
 
         // **OPTIMIZATION: Batch load all financial data for all stocks at once**
@@ -53,10 +57,9 @@ class StockScreenerService
         // Calculate ratio values for all stocks
         $screenerData = $this->buildScreenerData($sector->activeStocks, $categorizedRatios);
 
-        // Clear cache after use to free memory
         $this->ratioCalculator->clearCache();
 
-        return [
+        $result = [
             'sector' => [
                 'id' => $sector->id,
                 'name' => $sector->name,
@@ -64,6 +67,9 @@ class StockScreenerService
             'stocks_count' => $sector->activeStocks->count(),
             'categories' => $screenerData,
         ];
+
+        \Illuminate\Support\Facades\Cache::put($cacheKey, $result, 86400);
+        return $result;
     }
 
     /**
@@ -171,14 +177,19 @@ class StockScreenerService
 
             foreach ($stocksData as $stockData) {
                 $value = $stockData['ratios'][$ratioName];
-                if ($value !== null && is_numeric($value)) {
+                if ($value !== null && is_numeric($value) && is_finite($value)) {
                     $values[] = (float) $value;
                 }
             }
 
-            $averages[$ratioName] = !empty($values)
-                ? round(array_sum($values) / count($values), 2)
-                : null;
+            if (!empty($values)) {
+                $sum = array_sum($values);
+                $count = count($values);
+                $average = $sum / $count;
+                $averages[$ratioName] = is_finite($average) ? round($average, 2) : null;
+            } else {
+                $averages[$ratioName] = null;
+            }
         }
 
         return $averages;

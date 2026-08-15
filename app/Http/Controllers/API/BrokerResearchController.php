@@ -14,7 +14,6 @@ class BrokerResearchController extends BaseController
     public function getBrokerResearch(Request $request): JsonResponse
     {
         $validator = \Validator::make($request->all(), [
-            'shariah_only' => 'sometimes|boolean',
             'sector_id' => 'sometimes|uuid',
             'search' => 'sometimes|string|max:255',
         ]);
@@ -23,7 +22,6 @@ class BrokerResearchController extends BaseController
             return $this->sendError('Validation failed', $validator->errors(), 400);
         }
 
-        $shariahOnly = $request->boolean('shariah_only', false);
         $sectorId = $request->input('sector_id');
         $searchTerm = $request->input('search');
 
@@ -49,10 +47,6 @@ class BrokerResearchController extends BaseController
             ->whereBetween('br.date', [$quarterStart, $quarterEnd])
             ->where('s.is_active', true)
             ->where('s.market_cap', '>', 0);
-
-        if ($shariahOnly) {
-            $query->where('s.is_shariah', true);
-        }
 
         if ($sectorId) {
             $query->where('s.sector_id', $sectorId);

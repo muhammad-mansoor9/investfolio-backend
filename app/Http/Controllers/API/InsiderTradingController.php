@@ -42,27 +42,19 @@ class InsiderTradingController extends Controller
             $minFreeFloatPct = $request->input('min_free_float_pct', 15.0);
             $maxFreeFloatPct = $request->input('max_free_float_pct', 60.0);
             $minChangeThreshold = $request->input('min_change_threshold', 10.0);
-            $shariahOnly = true; // Always filter for Shariah stocks
 
             // Count excluded stock splits
-            $splitsQuery = DB::table('stock_share_changes_audit as sca')
+            $splitsExcluded = DB::table('stock_share_changes_audit as sca')
                 ->join('stocks as s', 'sca.stock_id', '=', 's.id')
                 ->whereBetween('sca.change_date', [$startDate, $endDate])
                 ->where('s.is_active', true)
                 ->where('s.market_cap', '>', 0)
                 ->whereRaw('((s.free_float::numeric / s.total_shares_outstanding::numeric) * 100) BETWEEN ? AND ?',
                     [$minFreeFloatPct, $maxFreeFloatPct])
-                ->where('sca.change_type', 'stock_split');
-
-            if ($shariahOnly) {
-                $splitsQuery->where('s.is_shariah', true);
-            }
-
-            $splitsExcluded = $splitsQuery->count();
+                ->where('sca.change_type', 'stock_split')
+                ->count();
 
             // Main query for period changes
-            $shariahFilter = $shariahOnly ? "AND s.is_shariah = true" : "";
-
             $changes = DB::select("
                 WITH period_changes AS (
                     SELECT
@@ -92,7 +84,6 @@ class InsiderTradingController extends Controller
                     WHERE sca.change_date BETWEEN ? AND ?
                       AND s.is_active = true
                       AND s.market_cap > 0
-                      {$shariahFilter}
                       AND s.total_shares_outstanding > 0
                       AND s.free_float > 0
                       AND ((s.free_float::numeric / s.total_shares_outstanding::numeric) * 100) BETWEEN ? AND ?

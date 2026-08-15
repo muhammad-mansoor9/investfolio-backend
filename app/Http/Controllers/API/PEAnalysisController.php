@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
+use App\Services\PECalculationService;
+use App\Services\SectorPEService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -10,6 +12,9 @@ use Illuminate\Support\Facades\Validator;
 
 class PEAnalysisController extends Controller
 {
+    public function __construct(
+        private PECalculationService $peService,
+    ) {}
     /**
      * Get P/E analysis for stocks or sectors
      *
@@ -23,7 +28,6 @@ class PEAnalysisController extends Controller
                 'type' => 'required|in:stocks,sectors',
                 'min_float' => 'nullable|numeric|min:0',
                 'max_float' => 'nullable|numeric|min:0',
-                'shariah_only' => 'nullable|in:true,false,1,0',
             ]);
 
             if ($validator->fails()) {
@@ -33,7 +37,6 @@ class PEAnalysisController extends Controller
             $type = $request->get('type');
             $minFloat = $request->get('min_float', 10);
             $maxFloat = $request->get('max_float', 100);
-            $shariahOnly = filter_var($request->get('shariah_only', false), FILTER_VALIDATE_BOOLEAN);
 
             // Validate min < max
             if ($minFloat >= $maxFloat) {
@@ -41,9 +44,9 @@ class PEAnalysisController extends Controller
             }
 
             if ($type === 'stocks') {
-                return $this->getStocksPEAnalysis($minFloat, $maxFloat, $shariahOnly);
+                return $this->getStocksPEAnalysis($minFloat, $maxFloat);
             } else {
-                return $this->getSectorsPEAnalysis($minFloat, $maxFloat, $shariahOnly);
+                return $this->getSectorsPEAnalysis($minFloat, $maxFloat);
             }
 
         } catch (\Exception $e) {
@@ -54,15 +57,10 @@ class PEAnalysisController extends Controller
     /**
      * Get P/E analysis for stocks
      */
-    private function getStocksPEAnalysis($minFloat, $maxFloat, $shariahOnly): JsonResponse
+    private function getStocksPEAnalysis($minFloat, $maxFloat): JsonResponse
     {
-        // Max P/E threshold for reasonable valuations
         $maxPEThreshold = 30;
 
-        // Build shariah condition for filtered stocks only
-        $shariahCondition = $shariahOnly ? 'AND s.is_shariah = true' : '';
-
-        // Main query - sector average calculated from ALL stocks, but results filtered by user preferences
         $query = "
         WITH all_stock_pe AS (
             -- Calculate P/E for ALL stocks to get true sector averages
@@ -108,7 +106,6 @@ class PEAnalysisController extends Controller
                 AND sp_latest.date = (SELECT MAX(date) FROM stock_prices)
             WHERE s.is_active = true
               AND s.market_cap > 0
-              $shariahCondition
               AND s.total_shares_outstanding > 0
               AND s.free_float > 0
               AND ((s.free_float::numeric / s.total_shares_outstanding::numeric) * 100)
@@ -195,8 +192,13 @@ class PEAnalysisController extends Controller
                 'max_pe_threshold' => $maxPEThreshold,
             ]);
 
+            // Get consistent sector PE metrics from service
+            $sectorPEMetrics = SectorPEService::calculateAll(now()->toDateString());
+
             // Map results to response format
-            $data = collect($results)->map(function ($row) {
+            $data = collect($results)->map(function ($row) use ($sectorPEMetrics) {
+                $sectorPE = $sectorPEMetrics[$row->sector_id] ?? [];
+
                 return [
                     'stock_id' => $row->stock_id,
                     'symbol' => $row->symbol,
@@ -209,6 +211,8 @@ class PEAnalysisController extends Controller
                     'ltm_eps' => (float) $row->ttm_eps_value,
                     'pe_ratio' => (float) $row->pe_ratio,
                     'sector_avg_pe' => (float) $row->sector_avg_pe,
+                    'sector_pe' => $sectorPE['sector_pe'] ?? null,
+                    'sector_top_pe' => $sectorPE['sector_top_pe'] ?? null,
                     'pe_vs_sector' => (float) $row->pe_vs_sector,
                     'discount_percent' => (float) $row->discount_pct,
                 ];
@@ -236,7 +240,7 @@ class PEAnalysisController extends Controller
     /**
      * Get P/E analysis for sectors
      */
-    private function getSectorsPEAnalysis($minFloat, $maxFloat, $shariahOnly): JsonResponse
+    private function getSectorsPEAnalysis($minFloat, $maxFloat): JsonResponse
     {
         // Max P/E threshold
         $maxPEThreshold = 30;
@@ -291,8 +295,13 @@ class PEAnalysisController extends Controller
                 'max_pe_threshold' => $maxPEThreshold,
             ]);
 
+            // Get consistent sector PE metrics from service
+            $sectorPEMetrics = SectorPEService::calculateAll(now()->toDateString());
+
             // Map results to response format
-            $data = collect($results)->map(function ($row) {
+            $data = collect($results)->map(function ($row) use ($sectorPEMetrics) {
+                $sectorPE = $sectorPEMetrics[$row->sector_id] ?? [];
+
                 return [
                     'sector_id' => $row->sector_id,
                     'sector_name' => $row->sector_name,
@@ -301,6 +310,8 @@ class PEAnalysisController extends Controller
                     'min_pe' => (float) $row->min_pe,
                     'max_pe' => (float) $row->max_pe,
                     'median_pe' => (float) $row->median_pe,
+                    'sector_pe' => $sectorPE['sector_pe'] ?? null,
+                    'sector_top_pe' => $sectorPE['sector_top_pe'] ?? null,
                 ];
             });
 
@@ -318,6 +329,96 @@ class PEAnalysisController extends Controller
 
         } catch (\Exception $e) {
             return $this->serverErrorResponse('Failed to analyze sector P/E data', $e);
+        }
+    }
+
+    public function cacheSectorAndStockPE(Request $request): JsonResponse
+    {
+        try {
+            $validator = Validator::make($request->all(), [
+                'stocks' => 'required|array|min:1',
+                'stocks.*.stock_id' => 'required|uuid|exists:stocks,id',
+                'stocks.*.symbol' => 'required|string|max:10',
+                'stocks.*.ttm_pe' => 'required|numeric|min:0',
+            ]);
+
+            if ($validator->fails()) {
+                return $this->validationErrorResponse($validator->errors());
+            }
+
+            $stocksData = $request->get('stocks');
+            $stocksBySecter = [];
+            $cachedStocks = [];
+
+            foreach ($stocksData as $stock) {
+                Cache::forever(
+                    "psx:stock_ttm_pe_latest:{$stock['symbol']}",
+                    [
+                        'stock_id' => $stock['stock_id'],
+                        'symbol' => $stock['symbol'],
+                        'ttm_pe' => (float) $stock['ttm_pe'],
+                    ]
+                );
+
+                $dbStock = DB::table('stocks')
+                    ->select('id', 'sector_id', 'symbol')
+                    ->where('id', $stock['stock_id'])
+                    ->first();
+
+                if ($dbStock) {
+                    if (!isset($stocksBySecter[$dbStock->sector_id])) {
+                        $stocksBySecter[$dbStock->sector_id] = [];
+                    }
+                    $stocksBySecter[$dbStock->sector_id][] = (float) $stock['ttm_pe'];
+                }
+
+                $cachedStocks[] = [
+                    'symbol' => $stock['symbol'],
+                    'ttm_pe' => (float) $stock['ttm_pe'],
+                ];
+            }
+
+            $cachedSectors = [];
+            foreach ($stocksBySecter as $sectorId => $peValues) {
+                $avgPE = array_sum($peValues) / count($peValues);
+
+                $sector = DB::table('sectors')
+                    ->select('id', 'name')
+                    ->where('id', $sectorId)
+                    ->first();
+
+                if ($sector) {
+                    $sectorData = [
+                        'sector_id' => $sector->id,
+                        'sector_name' => $sector->name,
+                        'avg_pe' => round($avgPE, 2),
+                        'total_stocks' => count($peValues),
+                    ];
+
+                    Cache::put(
+                        "psx:sector_pe_avg:{$sectorId}",
+                        $sectorData,
+                        24 * 60 * 60
+                    );
+
+                    $cachedSectors[] = $sectorData;
+                }
+            }
+
+            \Illuminate\Support\Facades\Log::info('Sector and stock P/E cached', [
+                'stocks_cached' => count($cachedStocks),
+                'sectors_cached' => count($cachedSectors),
+            ]);
+
+            return $this->successResponse([
+                'stocks_cached' => count($cachedStocks),
+                'sectors_cached' => count($cachedSectors),
+                'sector_data' => $cachedSectors,
+                'stock_data' => $cachedStocks,
+            ], 'Stock TTM PE and sector average PE cached successfully');
+
+        } catch (\Exception $e) {
+            return $this->serverErrorResponse('Failed to cache P/E data', $e);
         }
     }
 }

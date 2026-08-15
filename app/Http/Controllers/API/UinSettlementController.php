@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
+use App\Helpers\CacheHelper;
+use App\Services\UINSettlementService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -10,6 +12,9 @@ use Illuminate\Support\Facades\Validator;
 
 class UinSettlementController extends Controller
 {
+    public function __construct(
+        private UINSettlementService $uinService,
+    ) {}
     /**
      * Get UIN settlement analysis data with filters
      *
@@ -57,21 +62,32 @@ class UinSettlementController extends Controller
                 return $this->notFoundResponse('Stock not found');
             }
 
-            // Get UIN settlement data for the date range
-            $settlementData = DB::table('uin_settlement_data')
-                ->select([
-                    DB::raw("TO_CHAR(settlement_date, 'YYYY-MM-DD') as settlement_date"),
-                    'trade_volume',
-                    'trade_value',
-                    'uin_settlement_volume',
-                    'uin_settlement_value',
-                    'uin_percentage_volume',
-                    'uin_percentage_value'
-                ])
-                ->where('stock_id', $stockId)
-                ->whereBetween('settlement_date', [$startDate, $endDate])
-                ->orderBy('settlement_date', 'asc')
-                ->get();
+            $allSettlementData = $this->uinService->getSettlementData();
+
+            $settlementData = CacheHelper::normalize($allSettlementData)
+                ->filter(fn($item) => $item['stock_id'] === $stockId &&
+                                     $item['settlement_date'] >= $startDate &&
+                                     $item['settlement_date'] <= $endDate)
+                ->sortBy('settlement_date')
+                ->values();
+
+            if ($settlementData->isEmpty()) {
+                $settlementData = DB::table('uin_settlement_data')
+                    ->select([
+                        DB::raw("TO_CHAR(settlement_date, 'YYYY-MM-DD') as settlement_date"),
+                        'trade_volume',
+                        'trade_value',
+                        'uin_settlement_volume',
+                        'uin_settlement_value',
+                        'uin_percentage_volume',
+                        'uin_percentage_value'
+                    ])
+                    ->where('stock_id', $stockId)
+                    ->whereBetween('settlement_date', [$startDate, $endDate])
+                    ->orderBy('settlement_date', 'asc')
+                    ->get()
+                    ->map(fn($item) => (array) $item);
+            }
 
             // Calculate summary statistics
             $summary = [
@@ -238,32 +254,39 @@ class UinSettlementController extends Controller
 
             $comparisonData = [];
 
+            $allSettlementData = $this->uinService->getSettlementData();
+            $normalizedData = CacheHelper::normalize($allSettlementData);
+
             foreach ($stockIds as $stockId) {
-                // Get stock details
                 $stock = DB::table('stocks')->where('id', $stockId)->first();
 
                 if (!$stock) {
                     continue;
                 }
 
-                // Get average UIN percentages for this stock
-                $avgData = DB::table('uin_settlement_data')
-                    ->select([
-                        DB::raw('AVG(uin_percentage_volume) as avg_uin_percentage_volume'),
-                        DB::raw('AVG(uin_percentage_value) as avg_uin_percentage_value'),
-                        DB::raw('COUNT(*) as total_records')
-                    ])
-                    ->where('stock_id', $stockId)
-                    ->whereBetween('settlement_date', [$startDate, $endDate])
-                    ->first();
+                $stockData = $normalizedData
+                    ->filter(fn($item) => $item['stock_id'] === $stockId &&
+                                         $item['settlement_date'] >= $startDate &&
+                                         $item['settlement_date'] <= $endDate);
+
+                if ($stockData->isEmpty()) {
+                    $stockData = DB::table('uin_settlement_data')
+                        ->where('stock_id', $stockId)
+                        ->whereBetween('settlement_date', [$startDate, $endDate])
+                        ->get()
+                        ->map(fn($item) => (array) $item);
+                }
+
+                $avgUinVolume = $stockData->avg('uin_percentage_volume') ?? 0;
+                $avgUinValue = $stockData->avg('uin_percentage_value') ?? 0;
 
                 $comparisonData[] = [
                     'stock_id' => $stock->id,
                     'symbol' => $stock->symbol,
                     'description' => $stock->description,
-                    'avg_uin_percentage_volume' => (float) $avgData->avg_uin_percentage_volume,
-                    'avg_uin_percentage_value' => (float) $avgData->avg_uin_percentage_value,
-                    'total_records' => $avgData->total_records
+                    'avg_uin_percentage_volume' => (float) $avgUinVolume,
+                    'avg_uin_percentage_value' => (float) $avgUinValue,
+                    'total_records' => $stockData->count()
                 ];
             }
 

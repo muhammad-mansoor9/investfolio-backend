@@ -25,7 +25,6 @@ class VolumeController extends Controller
                 'max_free_float_pct' => 'sometimes|numeric|min:0|max:100',
                 'volume_threshold' => 'sometimes|numeric|min:1',
                 'min_trading_days' => 'sometimes|integer|min:5|max:30',
-                'is_shariah' => 'sometimes|boolean'
             ]);
 
             if ($validator->fails()) {
@@ -38,7 +37,6 @@ class VolumeController extends Controller
             $maxFreeFloat = $request->get('max_free_float_pct', 30.0);
             $volumeThreshold = $request->get('volume_threshold', 2.0);
             $minTradingDays = $request->get('min_trading_days', 15);
-            $isShariah = $request->has('is_shariah') ? $request->boolean('is_shariah') : null;
 
             // Main volume analysis query based on the Python script
             $volumeAnalysis = DB::select("
@@ -62,7 +60,6 @@ class VolumeController extends Controller
                     INNER JOIN stock_prices sp_latest ON s.id = sp_latest.stock_id AND sp_latest.date = ?
                     WHERE s.is_active = true
                       AND s.market_cap > 0
-                      " . ($isShariah !== null ? "AND s.is_shariah = ?" : "") . "
                       AND s.total_shares_outstanding > 0
                       AND s.free_float > 0
                       AND ((s.free_float::numeric / s.total_shares_outstanding::numeric) * 100) BETWEEN ? AND ?
@@ -123,13 +120,10 @@ class VolumeController extends Controller
                 INNER JOIN sectors sec ON sec.id = s.sector_id
                 WHERE (sdv.today_volume / NULLIF(sdv.avg_20d_volume, 0)) >= ?
                 ORDER BY rank
-            ", array_filter([
+            ", [
                 $analysisDate, $analysisDate, $analysisDate,
-                $isShariah !== null ? $isShariah : null,
                 $minFreeFloat, $maxFreeFloat, $minTradingDays, $volumeThreshold
-            ], function ($value) {
-                return $value !== null;
-            }));
+            ]);
 
             return $this->successResponse([
                 'analysis_date' => $analysisDate,
@@ -138,7 +132,6 @@ class VolumeController extends Controller
                     'max_free_float_pct' => $maxFreeFloat,
                     'volume_threshold' => $volumeThreshold,
                     'min_trading_days' => $minTradingDays,
-                    'is_shariah' => $isShariah
                 ],
                 'summary' => [
                     'total_stocks_analyzed' => count($volumeAnalysis),
@@ -165,7 +158,6 @@ class VolumeController extends Controller
                 'analysis_date' => 'sometimes|date',
                 'min_free_float_pct' => 'sometimes|numeric|min:0|max:100',
                 'max_free_float_pct' => 'sometimes|numeric|min:0|max:100',
-                'is_shariah' => 'sometimes|boolean'
             ]);
 
             if ($validator->fails()) {
@@ -176,7 +168,6 @@ class VolumeController extends Controller
             $analysisDate = $request->get('analysis_date') ?: DB::selectOne("SELECT MAX(date) as latest_date FROM stock_prices")->latest_date;
             $minFreeFloat = $request->get('min_free_float_pct', 15.0);
             $maxFreeFloat = $request->get('max_free_float_pct', 30.0);
-            $isShariah = $request->has('is_shariah') ? $request->boolean('is_shariah') : null;
 
             // Sector volume summary query based on the Python script
             $sectorSummary = DB::select("
@@ -199,7 +190,6 @@ class VolumeController extends Controller
                     INNER JOIN stock_prices sp_latest ON s.id = sp_latest.stock_id AND sp_latest.date = ?
                     WHERE s.is_active = true
                       AND s.market_cap > 0
-                      " . ($isShariah !== null ? "AND s.is_shariah = ?" : "") . "
                       AND s.total_shares_outstanding > 0
                       AND s.free_float > 0
                       AND ((s.free_float::numeric / s.total_shares_outstanding::numeric) * 100) BETWEEN ? AND ?
@@ -248,20 +238,16 @@ class VolumeController extends Controller
                 WHERE td.rn = 1
                 GROUP BY sec.id, sec.name
                 ORDER BY vs_yesterday DESC
-            ", array_filter([
+            ", [
                 $analysisDate, $analysisDate, $analysisDate,
-                $isShariah !== null ? $isShariah : null,
                 $minFreeFloat, $maxFreeFloat, $analysisDate
-            ], function ($value) {
-                return $value !== null;
-            }));
+            ]);
 
             return $this->successResponse([
                 'analysis_date' => $analysisDate,
                 'filters' => [
                     'min_free_float_pct' => $minFreeFloat,
                     'max_free_float_pct' => $maxFreeFloat,
-                    'is_shariah' => $isShariah
                 ],
                 'summary' => [
                     'total_sectors_analyzed' => count($sectorSummary),

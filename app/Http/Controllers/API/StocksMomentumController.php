@@ -2,7 +2,9 @@
 
 namespace App\Http\Controllers\API;
 
+use App\Helpers\CacheHelper;
 use App\Services\MansoorSpecialFilterService;
+use App\Services\StockSignalService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -10,6 +12,9 @@ use Illuminate\Support\Facades\Validator;
 
 class StocksMomentumController extends BaseController
 {
+    public function __construct(
+        private StockSignalService $signalService,
+    ) {}
     private const SIGNAL_STATE_MAP = [
         'Bearish' => 1,
         'Weak' => 2,
@@ -18,67 +23,197 @@ class StocksMomentumController extends BaseController
         'Very Bullish' => 5,
     ];
 
+    private const SIGNAL_WEIGHTS = [
+        'ema_structure' => 0.40,
+        'price_position' => 0.25,
+        'rsi_momentum' => 0.20,
+        'macd_confirmation' => 0.15,
+    ];
+
     private const SIGNAL_METADATA = [
         'ema_6_gt_10' => [
             'name' => 'EMA 6/10 Crossover',
             'description' => '6-period EMA greater than 10-period EMA (faster vs slower moving average)',
-            'purpose' => 'Identifies short-term trend initiation and momentum shifts',
-            'state_interpretations' => [
-                'Bullish' => '6-period EMA is above 10-period EMA, indicating upward momentum',
-                'Bearish' => '6-period EMA is below 10-period EMA, indicating downward momentum',
-                'Neutral' => 'EMAs are converging or diverging near parity',
-                'Weak' => 'Signal conflicting with other indicators',
+            'states' => [
+                'Very Bullish' => [
+                    'title' => 'Golden Crossover Confirmed',
+                    'description' => 'EMA6 above EMA10 with widening gap; momentum accelerating',
+                ],
+                'Bullish' => [
+                    'title' => 'Golden Cross Confirmed',
+                    'description' => 'EMA6 trading above EMA10; uptrend in place',
+                ],
+                'Neutral' => [
+                    'title' => 'EMA Convergence',
+                    'description' => 'EMA6 and EMA10 nearly equal; trend indecision',
+                ],
+                'Weak' => [
+                    'title' => 'Death Cross Forming',
+                    'description' => 'EMA6 falling below EMA10; uptrend breaking down',
+                ],
+                'Bearish' => [
+                    'title' => 'Death Cross Confirmed',
+                    'description' => 'EMA6 below EMA10 with confirmed lower lows; downtrend established',
+                ],
             ],
-            'calculation_details' => 'Compares exponential moving average (period=6) to EMA (period=10)',
         ],
         'ema_10_gt_21' => [
             'name' => 'EMA 10/21 Crossover',
             'description' => '10-period EMA greater than 21-period EMA (medium vs medium-long moving average)',
-            'purpose' => 'Confirms intermediate trend strength and sustainability',
-            'state_interpretations' => [
-                'Bullish' => '10-period EMA is above 21-period EMA, showing sustained uptrend',
-                'Bearish' => '10-period EMA is below 21-period EMA, showing sustained downtrend',
-                'Neutral' => 'EMAs near parity with uncertain direction',
-                'Weak' => 'Conflicting signals suggesting potential trend reversal',
+            'states' => [
+                'Very Bullish' => [
+                    'title' => 'Golden Crossover Confirmed',
+                    'description' => 'EMA10 above EMA21 with widening gap; strong medium-term uptrend',
+                ],
+                'Bullish' => [
+                    'title' => 'Golden Cross Confirmed',
+                    'description' => 'EMA10 trading above EMA21; medium-term uptrend in place',
+                ],
+                'Neutral' => [
+                    'title' => 'EMA Convergence',
+                    'description' => 'EMA10 and EMA21 nearly equal; medium-term trend in question',
+                ],
+                'Weak' => [
+                    'title' => 'Death Cross Forming',
+                    'description' => 'EMA10 falling below EMA21; medium-term uptrend breaking down',
+                ],
+                'Bearish' => [
+                    'title' => 'Death Cross Confirmed',
+                    'description' => 'EMA10 below EMA21; medium-term downtrend established',
+                ],
             ],
-            'calculation_details' => 'Compares exponential moving average (period=10) to EMA (period=21)',
         ],
-        'adx_strength' => [
-            'name' => 'ADX Trend Strength',
-            'description' => 'Average Directional Index measuring the strength of a trend regardless of direction',
-            'purpose' => 'Quantifies trend strength and identifies when trend is weakening',
-            'state_interpretations' => [
-                'Bullish' => 'ADX > 25 with DI+ > DI-, strong uptrend with increasing strength',
-                'Bearish' => 'ADX > 25 with DI- > DI+, strong downtrend with increasing strength',
-                'Neutral' => 'ADX between 20-25, trend is present but not yet strong',
-                'Weak' => 'ADX < 20, no clear trend or trend losing momentum',
+        'ema_10w_gt_21w' => [
+            'name' => 'EMA 10W/21W Crossover',
+            'description' => 'Weekly EMA10 greater than EMA21 (medium vs long-term weekly moving average)',
+            'states' => [
+                'Very Bullish' => [
+                    'title' => 'Golden Crossover Confirmed',
+                    'description' => 'EMA10W above EMA21W with widening gap; strong long-term uptrend',
+                ],
+                'Bullish' => [
+                    'title' => 'Golden Cross Confirmed',
+                    'description' => 'EMA10W trading above EMA21W; long-term uptrend established',
+                ],
+                'Neutral' => [
+                    'title' => 'EMA Convergence',
+                    'description' => 'EMA10W and EMA21W nearly equal; long-term direction uncertain',
+                ],
+                'Weak' => [
+                    'title' => 'Death Cross Forming',
+                    'description' => 'EMA10W falling below EMA21W; long-term uptrend at risk',
+                ],
+                'Bearish' => [
+                    'title' => 'Death Cross Confirmed',
+                    'description' => 'EMA10W below EMA21W; long-term downtrend established',
+                ],
             ],
-            'calculation_details' => 'ADX derived from +DI and -DI over 14 periods',
         ],
         'rsi_momentum' => [
             'name' => 'RSI Momentum',
-            'description' => 'Relative Strength Index measuring overbought/oversold conditions and momentum',
-            'purpose' => 'Identifies momentum extremes and potential reversal points',
-            'state_interpretations' => [
-                'Bullish' => 'RSI 50-70: Strong upward momentum without overbought extreme',
-                'Very Bullish' => 'RSI > 70: Overbought condition, potential for sharp pullback',
-                'Neutral' => 'RSI 40-60: Balanced momentum, no clear direction',
-                'Weak' => 'RSI 30-40: Downward momentum building without extreme oversold',
-                'Bearish' => 'RSI < 30: Oversold condition, potential for sharp bounce',
+            'description' => 'RSI(14) with 9-period Signal Line - 3-state signal (Bullish/Neutral/Bearish)',
+            'states' => [
+                'Bullish' => [
+                    'title' => 'Bullish Momentum',
+                    'description' => 'RSI ≥ 60 AND RSI > Signal line. Strong bullish momentum.',
+                ],
+                'Neutral' => [
+                    'title' => 'Neutral Zone',
+                    'description' => 'RSI between 40-60. Mixed momentum, consolidation.',
+                ],
+                'Bearish' => [
+                    'title' => 'Bearish Momentum',
+                    'description' => 'RSI < 40 AND RSI < Signal line. Strong bearish momentum.',
+                ],
             ],
-            'calculation_details' => 'RSI calculated over 14 periods: 100 - (100 / (1 + RS)) where RS = avg gains / avg losses',
         ],
         'macd_confirmation' => [
-            'name' => 'MACD Trend Confirmation',
-            'description' => 'Moving Average Convergence Divergence confirming trend direction and momentum',
-            'purpose' => 'Validates trend signals and identifies momentum shifts via histogram',
-            'state_interpretations' => [
-                'Bullish' => 'MACD line above signal line with positive/growing histogram, uptrend confirmed',
-                'Neutral' => 'MACD and signal lines converging or recently crossed, transition period',
-                'Weak' => 'MACD below signal line with declining histogram, downtrend confirmed but weakening',
-                'Bearish' => 'MACD line below signal line with negative histogram, downtrend confirmed',
+            'name' => 'MACD Confirmation',
+            'description' => 'MACD(12,26,9) - 3-state signal (Bullish/Neutral/Bearish)',
+            'states' => [
+                'Bullish' => [
+                    'title' => 'Bullish Momentum',
+                    'description' => 'MACD ≥ 0 AND MACD > Signal line. Bullish momentum confirmed.',
+                ],
+                'Neutral' => [
+                    'title' => 'Transition Zone',
+                    'description' => 'MACD between -0.5 and 0. Momentum cooling, transition phase.',
+                ],
+                'Bearish' => [
+                    'title' => 'Bearish Momentum',
+                    'description' => 'MACD < 0 AND MACD < Signal line. Bearish momentum confirmed.',
+                ],
             ],
-            'calculation_details' => 'MACD = EMA(12) - EMA(26), Signal = EMA(9) of MACD, Histogram = MACD - Signal',
+        ],
+        'price_position_ema6' => [
+            'name' => 'Price > EMA6 (Trend Health)',
+            'description' => 'Close > EMA6 (BULLISH) or Close ≤ EMA6 (BEARISH) on daily bars',
+            'states' => [
+                'Bullish' => [
+                    'title' => 'Above Short-term EMA',
+                    'description' => 'Close > EMA6. Daily price above short-term EMA, confirms uptrend health.',
+                ],
+                'Bearish' => [
+                    'title' => 'Below Short-term EMA',
+                    'description' => 'Close ≤ EMA6. Daily price below short-term EMA, signals weakening trend.',
+                ],
+            ],
+        ],
+        'price_position_ema10' => [
+            'name' => 'Price > EMA10 (Trend Health)',
+            'description' => 'Close > EMA10 (BULLISH) or Close ≤ EMA10 (BEARISH) on daily bars',
+            'states' => [
+                'Bullish' => [
+                    'title' => 'Above Medium-term EMA',
+                    'description' => 'Close > EMA10. Daily price above medium-term EMA, confirms uptrend health.',
+                ],
+                'Bearish' => [
+                    'title' => 'Below Medium-term EMA',
+                    'description' => 'Close ≤ EMA10. Daily price below medium-term EMA, signals weakening trend.',
+                ],
+            ],
+        ],
+        'price_position_ema10w' => [
+            'name' => 'Price > EMA10W (Trend Health)',
+            'description' => 'Close > EMA10W (BULLISH) or Close ≤ EMA10W (BEARISH) on weekly bars',
+            'states' => [
+                'Bullish' => [
+                    'title' => 'Above Weekly Medium-term EMA',
+                    'description' => 'Close > EMA10W. Weekly price above medium-term EMA, confirms institutional uptrend.',
+                ],
+                'Bearish' => [
+                    'title' => 'Below Weekly Medium-term EMA',
+                    'description' => 'Close ≤ EMA10W. Weekly price below medium-term EMA, signals trend breakdown.',
+                ],
+            ],
+        ],
+        'price_position_ema21w' => [
+            'name' => 'Price > EMA21W (Long-term Support)',
+            'description' => 'Close > EMA21W (BULLISH) or Close ≤ EMA21W (BEARISH) on weekly bars',
+            'states' => [
+                'Bullish' => [
+                    'title' => 'Above Weekly Long-term EMA',
+                    'description' => 'Close > EMA21W. Weekly price above long-term EMA, confirms strong institutional support.',
+                ],
+                'Bearish' => [
+                    'title' => 'Below Weekly Long-term EMA',
+                    'description' => 'Close ≤ EMA21W. Weekly price below long-term EMA, signals loss of long-term support.',
+                ],
+            ],
+        ],
+        'price_position_ema10m' => [
+            'name' => 'Price > EMA10M (Very Long-term Support)',
+            'description' => 'Close > EMA10M (BULLISH) or Close ≤ EMA10M (BEARISH) on monthly bars',
+            'states' => [
+                'Bullish' => [
+                    'title' => 'Above Monthly Medium-term EMA',
+                    'description' => 'Close > EMA10M. Monthly price above medium-term EMA, confirms very long-term uptrend.',
+                ],
+                'Bearish' => [
+                    'title' => 'Below Monthly Medium-term EMA',
+                    'description' => 'Close ≤ EMA10M. Monthly price below medium-term EMA, signals very long-term trend breakdown.',
+                ],
+            ],
         ],
     ];
 
@@ -87,7 +222,6 @@ class StocksMomentumController extends BaseController
         try {
             $validator = Validator::make($request->all(), [
                 'date' => 'sometimes|date_format:Y-m-d',
-                'shariah_only' => 'sometimes|boolean',
                 'mansoor_special' => 'sometimes|boolean',
             ]);
 
@@ -96,7 +230,6 @@ class StocksMomentumController extends BaseController
             }
 
             $requestedDate = $request->get('date');
-            $shariahOnly = $request->boolean('shariah_only', false);
             $mansoorSpecial = $request->boolean('mansoor_special', false);
 
             if ($mansoorSpecial) {
@@ -107,61 +240,93 @@ class StocksMomentumController extends BaseController
             }
 
             $strategies = ['explosive', 'swing', 'positional'];
+            $cutoffDate = $requestedDate ?? date('Y-m-d');
             $resolvedDates = [];
 
+            $signalCollections = [];
             foreach ($strategies as $strategy) {
-                $latestDate = DB::table('stock_signals')
-                    ->where('strategy', $strategy)
-                    ->where('signal_date', '<=', $requestedDate ?? date('Y-m-d'))
-                    ->max('signal_date');
+                $cachedSignals = $this->signalService->getSignalsByStrategy($strategy, $cutoffDate);
+                $collection = collect($cachedSignals);
 
-                if ($latestDate) {
-                    $resolvedDates[$strategy] = $latestDate;
+                if ($collection->isEmpty()) {
+                    $latestSignalDates = DB::table('stock_signals')
+                        ->select('stock_id', 'signal_name', DB::raw('MAX(signal_date) as latest_date'))
+                        ->where('strategy', $strategy)
+                        ->where('signal_date', '<=', $cutoffDate)
+                        ->whereNotIn('signal_name', ['price_position_ema21w'])
+                        ->groupBy('stock_id', 'signal_name');
+
+                    $strategySignals = DB::table('stock_signals as ss')
+                        ->join('stocks as s', 'ss.stock_id', '=', 's.id')
+                        ->leftJoin('sectors as sec', 's.sector_id', '=', 'sec.id')
+                        ->select([
+                            'ss.stock_id',
+                            's.symbol',
+                            's.description as company_name',
+                            's.is_shariah',
+                            'sec.id as sector_id',
+                            'sec.name as sector_name',
+                            'ss.strategy',
+                            'ss.signal_name',
+                            'ss.signal_state',
+                            'ss.signal_value',
+                            'ss.metadata',
+                            'ss.signal_date',
+                        ])
+                        ->where('ss.strategy', $strategy)
+                        ->where('s.is_active', true)
+                        ->where('s.market_cap', '>', 0)
+                        ->whereNotIn('ss.signal_name', ['price_position_ema21w'])
+                        ->joinSub($latestSignalDates, 'latest', function($join) {
+                            $join->on('ss.stock_id', '=', 'latest.stock_id')
+                                 ->on('ss.signal_name', '=', 'latest.signal_name')
+                                 ->on('ss.signal_date', '=', 'latest.latest_date');
+                        });
+
+                    if ($mansoorSpecial) {
+                        $strategySignals->leftJoin('stock_prices as sp', function($join) {
+                            $join->on('ss.stock_id', '=', 'sp.stock_id')
+                                 ->on('sp.date', '=', DB::raw("(
+                                    SELECT MAX(date) FROM stock_prices sp2
+                                    WHERE sp2.stock_id = ss.stock_id
+                                 )"));
+                        });
+
+                        $mansoorService = new MansoorSpecialFilterService();
+                        $strategySignals->whereRaw($mansoorService->getStocksWhereClause());
+                    }
+
+                    $collection = $strategySignals->get();
+                }
+
+                if ($collection->isNotEmpty()) {
+                    $collection = CacheHelper::normalize($collection);
+
+                    if ($mansoorSpecial) {
+                        $mansoorService = new MansoorSpecialFilterService();
+                        $collection = $collection->filter(function($signal) use ($mansoorService) {
+                            $stock = DB::table('stocks')
+                                ->where('id', $signal['stock_id'])
+                                ->first();
+                            if (!$stock) return false;
+
+                            return $mansoorService->passesFilter($stock);
+                        });
+                    }
+
+                    if ($collection->isNotEmpty()) {
+                        $resolvedDates[$strategy] = $collection->max(fn($item) => $item['signal_date']);
+                        $signalCollections[] = $collection;
+                    }
                 }
             }
 
-            if (empty($resolvedDates)) {
+            if (empty($signalCollections)) {
                 return $this->successResponse([
                     'date' => $requestedDate,
                     'total_results' => 0,
                     'data' => [],
                 ], 'No stock signal data found');
-            }
-
-            $signalCollections = [];
-            foreach ($resolvedDates as $strategy => $strategyDate) {
-                $strategySignals = DB::table('stock_signals as ss')
-                    ->join('stocks as s', 'ss.stock_id', '=', 's.id')
-                    ->leftJoin('sectors as sec', 's.sector_id', '=', 'sec.id')
-                    ->select([
-                        'ss.stock_id',
-                        'ss.symbol',
-                        's.description as company_name',
-                        's.is_shariah',
-                        'sec.id as sector_id',
-                        'sec.name as sector_name',
-                        'ss.strategy',
-                        'ss.signal_name',
-                        'ss.signal_state',
-                        'ss.signal_value',
-                        'ss.metadata',
-                        'ss.signal_date',
-                    ])
-                    ->where('ss.strategy', $strategy)
-                    ->where('ss.signal_date', $strategyDate)
-                    ->where('s.is_active', true)
-                    ->where('s.market_cap', '>', 0);
-
-                if ($shariahOnly || $mansoorSpecial) {
-                    $strategySignals->where('s.is_shariah', true);
-                }
-
-                if ($mansoorSpecial) {
-                    $mansoorService = new MansoorSpecialFilterService();
-                    $strategySignals->whereRaw($mansoorService->getStocksWhereClause());
-                }
-
-                $signalCollections[] = $strategySignals->get();
             }
 
             $signals = collect();
@@ -179,28 +344,29 @@ class StocksMomentumController extends BaseController
 
             $stockMap = [];
             foreach ($signals as $signal) {
-                $key = $signal->stock_id;
+
+                $key = $signal['stock_id'];
                 if (!isset($stockMap[$key])) {
                     $stockMap[$key] = [
-                        'stock_id' => $signal->stock_id,
-                        'symbol' => $signal->symbol,
-                        'company_name' => $signal->company_name,
-                        'sector_id' => $signal->sector_id,
-                        'sector_name' => $signal->sector_name,
-                        'is_shariah' => (bool)$signal->is_shariah,
+                        'stock_id' => $signal['stock_id'],
+                        'symbol' => $signal['symbol'],
+                        'company_name' => $signal['company_name'],
+                        'sector_id' => $signal['sector_id'],
+                        'sector_name' => $signal['sector_name'],
+                        'is_shariah' => (bool)$signal['is_shariah'],
                         'strategies' => [
-                            'explosive' => ['signals' => [], 'signal_date' => null],
-                            'swing' => ['signals' => [], 'signal_date' => null],
-                            'positional' => ['signals' => [], 'signal_date' => null],
+                            'explosive' => ['signals' => []],
+                            'swing' => ['signals' => []],
+                            'positional' => ['signals' => []],
                         ],
                     ];
                 }
 
-                $signalState = trim($signal->signal_state);
+                $signalState = trim($signal['signal_state']);
                 if (isset(self::SIGNAL_STATE_MAP[$signalState])) {
                     $decodedMetadata = [];
-                    if (!empty($signal->metadata)) {
-                        $decodedMetadata = json_decode($signal->metadata, true);
+                    if (!empty($signal['metadata'])) {
+                        $decodedMetadata = json_decode($signal['metadata'], true);
                         if (!is_array($decodedMetadata)) {
                             $decodedMetadata = [];
                         }
@@ -209,12 +375,12 @@ class StocksMomentumController extends BaseController
                     $signalData = [
                         'state' => $signalState,
                         'value' => self::SIGNAL_STATE_MAP[$signalState],
-                        'actual_value' => !empty($signal->signal_value) ? (float)$signal->signal_value : null,
+                        'actual_value' => !empty($signal['signal_value']) ? (float)$signal['signal_value'] : null,
                         'metadata' => $decodedMetadata,
+                        'signal_date' => $signal['signal_date'],
                     ];
 
-                    $stockMap[$key]['strategies'][$signal->strategy]['signals'][$signal->signal_name] = $signalData;
-                    $stockMap[$key]['strategies'][$signal->strategy]['signal_date'] = $signal->signal_date;
+                    $stockMap[$key]['strategies'][$signal['strategy']]['signals'][$signal['signal_name']] = $signalData;
                 }
             }
 
@@ -331,39 +497,31 @@ class StocksMomentumController extends BaseController
         foreach ($strategies as $strategy => $data) {
             $signals = $data['signals'] ?? [];
 
-            $signalValues = [];
-            $availableSignals = array_keys($signals);
+            // Map signal names to signal types (ema_structure, price_position, etc.)
+            $normalizedSignals = $this->normalizeSignals($signals);
 
-            foreach ($availableSignals as $signalName) {
-                $state = $signals[$signalName]['state'] ?? null;
-                if ($state && isset(self::SIGNAL_STATE_MAP[$state])) {
-                    $signalValues[] = self::SIGNAL_STATE_MAP[$state];
-                }
-            }
+            // Calculate weighted score with trend veto
+            $score = $this->calculateWeightedScore($normalizedSignals);
 
-            $signalsAvailable = count($signalValues);
-
-            if ($signalsAvailable > 0) {
-                $average = array_sum($signalValues) / $signalsAvailable;
-                $score = (($average - 1) / 4) * 100;
-            } else {
-                $score = 0;
-            }
+            $signalsAvailable = count($signals);
 
             $signalDetails = [];
-            foreach ($availableSignals as $signalName) {
-                $state = $signals[$signalName]['state'] ?? null;
+            foreach ($signals as $signalName => $signalData) {
+                $state = $signalData['state'] ?? null;
                 if ($state && isset(self::SIGNAL_STATE_MAP[$state])) {
                     $signalDetails[$signalName] = [
                         'state' => $state,
                         'value' => self::SIGNAL_STATE_MAP[$state],
                     ];
 
-                    if (isset($signals[$signalName]['actual_value'])) {
-                        $signalDetails[$signalName]['actual_value'] = $signals[$signalName]['actual_value'];
+                    if (isset($signalData['actual_value'])) {
+                        $signalDetails[$signalName]['actual_value'] = $signalData['actual_value'];
                     }
-                    if (isset($signals[$signalName]['metadata'])) {
-                        $signalDetails[$signalName]['metadata'] = $signals[$signalName]['metadata'];
+                    if (isset($signalData['metadata'])) {
+                        $signalDetails[$signalName]['metadata'] = $signalData['metadata'];
+                    }
+                    if (isset($signalData['signal_date'])) {
+                        $signalDetails[$signalName]['signal_date'] = $signalData['signal_date'];
                     }
                 }
             }
@@ -373,13 +531,89 @@ class StocksMomentumController extends BaseController
                 'signals_available' => $signalsAvailable,
                 'signals' => $signalDetails,
             ];
-
-            // Preserve signal_date if it exists
-            if (isset($data['signal_date'])) {
-                $strategies[$strategy]['signal_date'] = $data['signal_date'];
-            }
         }
 
         return $strategies;
     }
+
+    private function normalizeSignals(array $signals): array
+    {
+        $normalized = [];
+
+        foreach ($signals as $signalName => $signalData) {
+
+            $state = $signalData['state'] ?? null;
+            if (!$state || !isset(self::SIGNAL_STATE_MAP[$state])) {
+                continue;
+            }
+
+            // Map signal name to signal type
+            if (strpos($signalName, 'ema') === 0) {
+                $type = 'ema_structure';
+            } elseif (strpos($signalName, 'price') === 0) {
+                $type = 'price_position';
+            } elseif (strpos($signalName, 'rsi') === 0) {
+                $type = 'rsi_momentum';
+            } elseif (strpos($signalName, 'macd') === 0) {
+                $type = 'macd_confirmation';
+            } else {
+                continue; // Skip unknown signal types
+            }
+
+            $normalized[$type] = [
+                'state' => $state,
+                'value' => self::SIGNAL_STATE_MAP[$state],
+            ];
+        }
+
+        return $normalized;
+    }
+
+    private function calculateWeightedScore(array $normalizedSignals): float
+    {
+        // v6.0: Binary signals (EMA, Price) + 3-state signals (RSI, MACD)
+        $binaryToScore = [
+            'Bullish' => 100,
+            'Bearish' => 0,
+        ];
+
+        $multiStateToScore = [
+            'Bullish' => 100,
+            'Neutral' => 50,
+            'Bearish' => 0,
+        ];
+
+        // If no EMA structure signal, can't calculate meaningful score
+        if (!isset($normalizedSignals['ema_structure'])) {
+            return 0;
+        }
+
+        $weightedSum = 0;
+        $totalWeight = 0;
+
+        // Calculate weighted sum
+        foreach ($normalizedSignals as $type => $data) {
+            $state = $data['state'];
+            $weight = self::SIGNAL_WEIGHTS[$type] ?? 0;
+
+            // Binary signals: EMA Structure, Price Position
+            if ($type === 'ema_structure' || $type === 'price_position') {
+                $numericScore = $binaryToScore[$state] ?? 0;
+            } else {
+                // 3-state signals: RSI Momentum, MACD Confirmation (v6.0)
+                $numericScore = $multiStateToScore[$state] ?? 50;
+            }
+
+            $weightedSum += $numericScore * $weight;
+            $totalWeight += $weight;
+        }
+
+        // Normalize by total weight (in case some signals are missing)
+        // Formula: (EMA×0.40 + Price×0.25 + RSI×0.20 + MACD×0.15)
+        // Scoring: EMA/Price (100 or 0) + RSI/MACD (100, 50, or 0)
+        $overallScore = $totalWeight > 0 ? ($weightedSum / $totalWeight) : 0;
+
+        return min(100, max(0, $overallScore));
+    }
+
 }

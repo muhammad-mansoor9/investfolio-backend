@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
+use App\Helpers\CacheHelper;
+use App\Services\FIPILIPIService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
@@ -10,6 +12,9 @@ use Illuminate\Support\Facades\Validator;
 
 class FIPILIPIMarketController extends Controller
 {
+    public function __construct(
+        private FIPILIPIService $fipiLipiService,
+    ) {}
     public function getMarketTypeView(Request $request): JsonResponse
     {
         try {
@@ -24,26 +29,39 @@ class FIPILIPIMarketController extends Controller
                 return $this->validationErrorResponse($validator->errors());
             }
 
-            $query = DB::table('fipi_lipi_market_data')
-                ->whereBetween('trade_date', [$request->get('start_date'), $request->get('end_date')]);
+            $startDate = $request->get('start_date');
+            $endDate = $request->get('end_date');
 
-            $this->applyFilters($query, $request);
+            $allMarketData = $this->fipiLipiService->getMarketData($endDate);
 
-            $rawData = $query
-                ->select([
-                    'market_type',
-                    'investor_type',
-                    // FIXED: Use COALESCE to handle NULL values properly
-                    DB::raw('COALESCE(SUM(buy_volume), 0) as buying_volume'),
-                    DB::raw('COALESCE(SUM(buy_value), 0) as buying_value'),
-                    DB::raw('COALESCE(SUM(sell_volume), 0) as selling_volume'),
-                    DB::raw('COALESCE(SUM(sell_value), 0) as selling_value'),
-                    DB::raw('COALESCE(SUM(net_value), 0) as net_buy_sell')
-                ])
-                ->groupBy('market_type', 'investor_type')
-                ->orderBy('market_type')
-                ->orderBy('investor_type')
-                ->get();
+            $filteredData = CacheHelper::normalize($allMarketData)
+                ->filter(fn($item) => $item['trade_date'] >= $startDate && $item['trade_date'] <= $endDate);
+
+            if ($filteredData->isEmpty()) {
+                $query = DB::table('fipi_lipi_market_data')
+                    ->whereBetween('trade_date', [$startDate, $endDate]);
+
+                $this->applyFilters($query, $request);
+
+                $filteredData = $query->get()->map(fn($item) => (array) $item);
+            }
+
+            $grouped = $filteredData->groupBy(fn($item) => $item['market_type'] . '|' . $item['investor_type'])
+                ->map(function($group) {
+                    $item = $group->first();
+                    return [
+                        'market_type' => $item['market_type'],
+                        'investor_type' => $item['investor_type'],
+                        'buying_volume' => $group->sum('buy_volume'),
+                        'buying_value' => $group->sum('buy_value'),
+                        'selling_volume' => $group->sum('sell_volume'),
+                        'selling_value' => $group->sum('sell_value'),
+                        'net_buy_sell' => $group->sum('net_value')
+                    ];
+                })
+                ->values();
+
+            $rawData = $grouped;
 
             $marketTables = [];
             $grandTotal = [
@@ -68,13 +86,12 @@ class FIPILIPIMarketController extends Controller
                     'market_type' => $marketType,
                     'investor_rows' => $investors->map(function($item) {
                         return [
-                            'investor_type' => $item->investor_type,
-                            // FIXED: Cast to float to ensure numeric values
-                            'buying_volume' => (float) $item->buying_volume,
-                            'buying_value' => (float) $item->buying_value,
-                            'selling_volume' => (float) $item->selling_volume,
-                            'selling_value' => (float) $item->selling_value,
-                            'net_buy_sell' => (float) $item->net_buy_sell
+                            'investor_type' => $item['investor_type'],
+                            'buying_volume' => (float) $item['buying_volume'],
+                            'buying_value' => (float) $item['buying_value'],
+                            'selling_volume' => (float) $item['selling_volume'],
+                            'selling_value' => (float) $item['selling_value'],
+                            'net_buy_sell' => (float) $item['net_buy_sell']
                         ];
                     })->values()->toArray(),
                     'market_total' => $marketTotal
@@ -116,26 +133,39 @@ class FIPILIPIMarketController extends Controller
                 return $this->validationErrorResponse($validator->errors());
             }
 
-            $query = DB::table('fipi_lipi_market_data')
-                ->whereBetween('trade_date', [$request->get('start_date'), $request->get('end_date')]);
+            $startDate = $request->get('start_date');
+            $endDate = $request->get('end_date');
 
-            $this->applyFilters($query, $request);
+            $allMarketData = $this->fipiLipiService->getMarketData($endDate);
 
-            $rawData = $query
-                ->select([
-                    'investor_type',
-                    'market_type',
-                    // FIXED: Use COALESCE to handle NULL values properly
-                    DB::raw('COALESCE(SUM(buy_volume), 0) as buying_volume'),
-                    DB::raw('COALESCE(SUM(buy_value), 0) as buying_value'),
-                    DB::raw('COALESCE(SUM(sell_volume), 0) as selling_volume'),
-                    DB::raw('COALESCE(SUM(sell_value), 0) as selling_value'),
-                    DB::raw('COALESCE(SUM(net_value), 0) as net_buy_sell')
-                ])
-                ->groupBy('investor_type', 'market_type')
-                ->orderBy('investor_type')
-                ->orderBy('market_type')
-                ->get();
+            $filteredData = CacheHelper::normalize($allMarketData)
+                ->filter(fn($item) => $item['trade_date'] >= $startDate && $item['trade_date'] <= $endDate);
+
+            if ($filteredData->isEmpty()) {
+                $query = DB::table('fipi_lipi_market_data')
+                    ->whereBetween('trade_date', [$startDate, $endDate]);
+
+                $this->applyFilters($query, $request);
+
+                $filteredData = $query->get()->map(fn($item) => (array) $item);
+            }
+
+            $grouped = $filteredData->groupBy(fn($item) => $item['investor_type'] . '|' . $item['market_type'])
+                ->map(function($group) {
+                    $item = $group->first();
+                    return [
+                        'investor_type' => $item['investor_type'],
+                        'market_type' => $item['market_type'],
+                        'buying_volume' => $group->sum('buy_volume'),
+                        'buying_value' => $group->sum('buy_value'),
+                        'selling_volume' => $group->sum('sell_volume'),
+                        'selling_value' => $group->sum('sell_value'),
+                        'net_buy_sell' => $group->sum('net_value')
+                    ];
+                })
+                ->values();
+
+            $rawData = $grouped;
 
             $investorTables = [];
             $grandTotal = [
@@ -147,7 +177,6 @@ class FIPILIPIMarketController extends Controller
             ];
 
             foreach ($rawData->groupBy('investor_type') as $investorType => $markets) {
-                // FIXED: Ensure proper type casting to float for calculations
                 $investorTotal = [
                     'buying_volume' => (float) $markets->sum('buying_volume'),
                     'buying_value' => (float) $markets->sum('buying_value'),
@@ -160,13 +189,12 @@ class FIPILIPIMarketController extends Controller
                     'investor_type' => $investorType,
                     'market_rows' => $markets->map(function($item) {
                         return [
-                            'market_type' => $item->market_type,
-                            // FIXED: Cast to float to ensure numeric values
-                            'buying_volume' => (float) $item->buying_volume,
-                            'buying_value' => (float) $item->buying_value,
-                            'selling_volume' => (float) $item->selling_volume,
-                            'selling_value' => (float) $item->selling_value,
-                            'net_buy_sell' => (float) $item->net_buy_sell
+                            'market_type' => $item['market_type'],
+                            'buying_volume' => (float) $item['buying_volume'],
+                            'buying_value' => (float) $item['buying_value'],
+                            'selling_volume' => (float) $item['selling_volume'],
+                            'selling_value' => (float) $item['selling_value'],
+                            'net_buy_sell' => (float) $item['net_buy_sell']
                         ];
                     })->values()->toArray(),
                     'investor_total' => $investorTotal

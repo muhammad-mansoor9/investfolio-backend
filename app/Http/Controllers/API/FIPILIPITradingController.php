@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
+use App\Helpers\CacheHelper;
+use App\Services\FIPILIPIService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
@@ -10,6 +12,9 @@ use Illuminate\Support\Facades\Validator;
 
 class FIPILIPITradingController extends Controller
 {
+    public function __construct(
+        private FIPILIPIService $fipiLipiService,
+    ) {}
     public function getSectorView(Request $request): JsonResponse
     {
         try {
@@ -24,25 +29,39 @@ class FIPILIPITradingController extends Controller
                 return $this->validationErrorResponse($validator->errors());
             }
 
-            $query = DB::table('fipi_lipi_trading_data')
-                ->whereBetween('trade_date', [$request->get('start_date'), $request->get('end_date')]);
+            $startDate = $request->get('start_date');
+            $endDate = $request->get('end_date');
 
-            $this->applyFilters($query, $request);
+            $allTradingData = $this->fipiLipiService->getTradingData($endDate);
 
-            $rawData = $query
-                ->select([
-                    'sector_name',
-                    'investor_type',
-                    DB::raw('COALESCE(SUM(buy_volume), 0) as buying_volume'),
-                    DB::raw('COALESCE(SUM(buy_value), 0) as buying_value'),
-                    DB::raw('COALESCE(SUM(sell_volume), 0) as selling_volume'),
-                    DB::raw('COALESCE(SUM(sell_value), 0) as selling_value'),
-                    DB::raw('COALESCE(SUM(net_value), 0) as net_buy_sell')
-                ])
-                ->groupBy('sector_name', 'investor_type')
-                ->orderBy('sector_name')
-                ->orderBy('investor_type')
-                ->get();
+            $filteredData = CacheHelper::normalize($allTradingData)
+                ->filter(fn($item) => $item['trade_date'] >= $startDate && $item['trade_date'] <= $endDate);
+
+            if ($filteredData->isEmpty()) {
+                $query = DB::table('fipi_lipi_trading_data')
+                    ->whereBetween('trade_date', [$startDate, $endDate]);
+
+                $this->applyFilters($query, $request);
+
+                $filteredData = $query->get()->map(fn($item) => (array) $item);
+            }
+
+            $grouped = $filteredData->groupBy(fn($item) => $item['sector_name'] . '|' . $item['investor_type'])
+                ->map(function($group) {
+                    $item = $group->first();
+                    return [
+                        'sector_name' => $item['sector_name'],
+                        'investor_type' => $item['investor_type'],
+                        'buying_volume' => $group->sum('buy_volume'),
+                        'buying_value' => $group->sum('buy_value'),
+                        'selling_volume' => $group->sum('sell_volume'),
+                        'selling_value' => $group->sum('sell_value'),
+                        'net_buy_sell' => $group->sum('net_value')
+                    ];
+                })
+                ->values();
+
+            $rawData = $grouped;
 
             $sectorTables = [];
             $grandTotal = [
@@ -66,12 +85,12 @@ class FIPILIPITradingController extends Controller
                     'sector_name' => $sectorName,
                     'investor_rows' => $investors->map(function($item) {
                         return [
-                            'investor_type' => $item->investor_type,
-                            'buying_volume' => $item->buying_volume,
-                            'buying_value' => $item->buying_value,
-                            'selling_volume' => $item->selling_volume,
-                            'selling_value' => $item->selling_value,
-                            'net_buy_sell' => $item->net_buy_sell
+                            'investor_type' => $item['investor_type'],
+                            'buying_volume' => $item['buying_volume'],
+                            'buying_value' => $item['buying_value'],
+                            'selling_volume' => $item['selling_volume'],
+                            'selling_value' => $item['selling_value'],
+                            'net_buy_sell' => $item['net_buy_sell']
                         ];
                     })->values()->toArray(),
                     'sector_total' => $sectorTotal
@@ -112,25 +131,39 @@ class FIPILIPITradingController extends Controller
                 return $this->validationErrorResponse($validator->errors());
             }
 
-            $query = DB::table('fipi_lipi_trading_data')
-                ->whereBetween('trade_date', [$request->get('start_date'), $request->get('end_date')]);
+            $startDate = $request->get('start_date');
+            $endDate = $request->get('end_date');
 
-            $this->applyFilters($query, $request);
+            $allTradingData = $this->fipiLipiService->getTradingData($endDate);
 
-            $rawData = $query
-                ->select([
-                    'investor_type',
-                    'sector_name',
-                    DB::raw('COALESCE(SUM(buy_volume), 0) as buying_volume'),
-                    DB::raw('COALESCE(SUM(buy_value), 0) as buying_value'),
-                    DB::raw('COALESCE(SUM(sell_volume), 0) as selling_volume'),
-                    DB::raw('COALESCE(SUM(sell_value), 0) as selling_value'),
-                    DB::raw('COALESCE(SUM(net_value), 0) as net_buy_sell')
-                ])
-                ->groupBy('investor_type', 'sector_name')
-                ->orderBy('investor_type')
-                ->orderBy('sector_name')
-                ->get();
+            $filteredData = CacheHelper::normalize($allTradingData)
+                ->filter(fn($item) => $item['trade_date'] >= $startDate && $item['trade_date'] <= $endDate);
+
+            if ($filteredData->isEmpty()) {
+                $query = DB::table('fipi_lipi_trading_data')
+                    ->whereBetween('trade_date', [$startDate, $endDate]);
+
+                $this->applyFilters($query, $request);
+
+                $filteredData = $query->get()->map(fn($item) => (array) $item);
+            }
+
+            $grouped = $filteredData->groupBy(fn($item) => $item['investor_type'] . '|' . $item['sector_name'])
+                ->map(function($group) {
+                    $item = $group->first();
+                    return [
+                        'investor_type' => $item['investor_type'],
+                        'sector_name' => $item['sector_name'],
+                        'buying_volume' => $group->sum('buy_volume'),
+                        'buying_value' => $group->sum('buy_value'),
+                        'selling_volume' => $group->sum('sell_volume'),
+                        'selling_value' => $group->sum('sell_value'),
+                        'net_buy_sell' => $group->sum('net_value')
+                    ];
+                })
+                ->values();
+
+            $rawData = $grouped;
 
             $investorTables = [];
             $grandTotal = [
@@ -154,12 +187,12 @@ class FIPILIPITradingController extends Controller
                     'investor_type' => $investorType,
                     'sector_rows' => $sectors->map(function($item) {
                         return [
-                            'sector_name' => $item->sector_name,
-                            'buying_volume' => $item->buying_volume,
-                            'buying_value' => $item->buying_value,
-                            'selling_volume' => $item->selling_volume,
-                            'selling_value' => $item->selling_value,
-                            'net_buy_sell' => $item->net_buy_sell
+                            'sector_name' => $item['sector_name'],
+                            'buying_volume' => $item['buying_volume'],
+                            'buying_value' => $item['buying_value'],
+                            'selling_volume' => $item['selling_volume'],
+                            'selling_value' => $item['selling_value'],
+                            'net_buy_sell' => $item['net_buy_sell']
                         ];
                     })->values()->toArray(),
                     'investor_total' => $investorTotal

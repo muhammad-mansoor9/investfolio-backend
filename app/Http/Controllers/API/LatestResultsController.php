@@ -21,7 +21,6 @@ class LatestResultsController extends Controller
     {
         try {
             $validator = Validator::make($request->all(), [
-                'shariah_only' => 'nullable|in:true,false,1,0',
                 'sector_id' => 'nullable|uuid',
                 'mansoor_special' => 'nullable|in:true,false,1,0',
             ]);
@@ -30,7 +29,6 @@ class LatestResultsController extends Controller
                 return $this->validationErrorResponse($validator->errors());
             }
 
-            $shariahOnly = filter_var($request->get('shariah_only', false), FILTER_VALIDATE_BOOLEAN);
             $sectorId = $request->get('sector_id');
             $mansoorSpecial = filter_var($request->get('mansoor_special', false), FILTER_VALIDATE_BOOLEAN);
 
@@ -41,7 +39,7 @@ class LatestResultsController extends Controller
                 }
             }
 
-            $results = $this->fetchLatestResults($shariahOnly, $sectorId, $mansoorSpecial);
+            $results = $this->fetchLatestResults($sectorId, $mansoorSpecial);
 
             return $this->successResponse([
                 'total_results' => count($results),
@@ -56,14 +54,12 @@ class LatestResultsController extends Controller
     /**
      * Fetch latest results data from database
      *
-     * @param bool $shariahOnly
      * @param string|null $sectorId
      * @param bool $mansoorSpecial
      * @return array
      */
-    private function fetchLatestResults($shariahOnly, $sectorId, $mansoorSpecial): array
+    private function fetchLatestResults($sectorId, $mansoorSpecial): array
     {
-        $shariahCondition = $shariahOnly ? 'AND s.is_shariah = true' : '';
         $sectorCondition = $sectorId ? 'AND s.sector_id = :sector_id' : '';
 
         $params = [];
@@ -99,7 +95,6 @@ class LatestResultsController extends Controller
             LEFT JOIN sectors sec ON s.sector_id = sec.id
             WHERE s.is_active = true
               AND s.market_cap > 0
-              $shariahCondition
               $sectorCondition
         ),
         latest_prices AS (

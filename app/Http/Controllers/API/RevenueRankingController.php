@@ -22,7 +22,6 @@ class RevenueRankingController extends Controller
             $validator = Validator::make($request->all(), [
                 'min_float' => 'nullable|numeric|min:0',
                 'max_float' => 'nullable|numeric|min:0',
-                'shariah_only' => 'nullable|in:true,false,1,0',
             ]);
 
             if ($validator->fails()) {
@@ -31,14 +30,11 @@ class RevenueRankingController extends Controller
 
             $minFloat = $request->get('min_float', 10);
             $maxFloat = $request->get('max_float', 100);
-            $shariahOnly = filter_var($request->get('shariah_only', false), FILTER_VALIDATE_BOOLEAN);
 
             // Validate min < max
             if ($minFloat >= $maxFloat) {
                 return $this->validationErrorResponse(['min_float' => 'Min float must be less than max float']);
             }
-
-            $shariahCondition = $shariahOnly ? 'AND s.is_shariah = true' : '';
 
             $query = "
             WITH eligible_stocks AS (
@@ -49,7 +45,6 @@ class RevenueRankingController extends Controller
                 FROM stocks s
                 WHERE s.is_active = true
                   AND s.market_cap > 0
-                  $shariahCondition
                   AND s.total_shares_outstanding > 0
                   AND s.free_float > 0
                   AND ((s.free_float::numeric / s.total_shares_outstanding::numeric) * 100)

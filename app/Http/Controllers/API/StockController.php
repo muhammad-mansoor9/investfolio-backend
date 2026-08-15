@@ -3,7 +3,10 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
+use App\Helpers\CacheHelper;
 use App\Services\MansoorSpecialFilterService;
+use App\Services\StockService;
+use App\Services\StockPriceService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -11,6 +14,10 @@ use Illuminate\Support\Facades\Validator;
 
 class StockController extends Controller
 {
+    public function __construct(
+        private StockService $stockService,
+        private StockPriceService $priceService,
+    ) {}
     /**
      * Get list of stocks for dropdown
      *
@@ -32,45 +39,50 @@ class StockController extends Controller
             $searchQuery = $request->get('search', '');
             $limit = $request->get('limit', 500);
 
-            $query = DB::table('stocks as s')
-                ->leftJoin('sectors as sec', 's.sector_id', '=', 'sec.id')
-                ->select([
-                    's.id',
-                    's.symbol',
-                    's.description',
-                    's.is_shariah',
-                    's.market_cap',
-                    'sec.id as sector_id',
-                    'sec.name as sector_name',
-                ])
-                ->where('s.is_active', true)
-                ->where('s.market_cap', '>', 0);
+            $cachedStocks = $this->stockService->getAllStocks();
+            $stocks = CacheHelper::normalize($cachedStocks);
+
+            if ($stocks->isEmpty()) {
+                $stocks = DB::table('stocks')
+                    ->select('*')
+                    ->where('is_active', true)
+                    ->where('market_cap', '>', 0)
+                    ->get()
+                    ->map(fn($item) => (array) $item);
+            }
+
+            // Enrich sector names from cache (cached only when sync_stocks runs)
+            $sectorMap = \Illuminate\Support\Facades\Cache::get('psx:sectors', collect());
+            $stocks = $stocks->map(function ($stock) use ($sectorMap) {
+                $stock['sector_name'] = $stock['sector_id'] ? ($sectorMap[$stock['sector_id']] ?? null) : null;
+                return $stock;
+            });
 
             if (!empty($searchQuery)) {
-                $query->where(function ($q) use ($searchQuery) {
-                    $q->where('s.symbol', 'ILIKE', '%' . $searchQuery . '%')
-                        ->orWhere('s.description', 'ILIKE', '%' . $searchQuery . '%');
+                $stocks = $stocks->filter(function ($stock) use ($searchQuery) {
+                    $searchUpper = strtoupper($searchQuery);
+                    return strpos(strtoupper($stock['symbol']), $searchUpper) !== false ||
+                           strpos(strtoupper($stock['description']), $searchUpper) !== false;
                 });
             }
 
-            $stocks = $query
-                ->orderBy('s.symbol', 'asc')
-                ->limit($limit)
-                ->get();
-
-            $formattedStocks = $stocks->map(function ($stock) {
-                return [
-                    'id' => $stock->id,
-                    'symbol' => $stock->symbol,
-                    'description' => $stock->description,
-                    'is_shariah' => $stock->is_shariah,
-                    'market_cap' => $stock->market_cap,
-                    'sector' => $stock->sector_id ? [
-                        'id' => $stock->sector_id,
-                        'name' => $stock->sector_name
-                    ] : null,
-                ];
-            });
+            $formattedStocks = $stocks
+                ->sortBy('symbol')
+                ->take($limit)
+                ->map(function ($stock) {
+                    return [
+                        'id' => $stock['id'],
+                        'symbol' => $stock['symbol'],
+                        'description' => $stock['description'],
+                        'is_shariah' => $stock['is_shariah'],
+                        'market_cap' => $stock['market_cap'],
+                        'sector' => ($stock['sector_id'] ?? null) ? [
+                            'id' => $stock['sector_id'],
+                            'name' => $stock['sector_name'] ?? null
+                        ] : null,
+                    ];
+                })
+                ->values();
 
             return $this->successResponse([
                 'stocks' => $formattedStocks,
@@ -94,7 +106,6 @@ class StockController extends Controller
             $validator = Validator::make($request->all(), [
                 'query' => 'required|string|min:1|max:255',
                 'limit' => 'sometimes|integer|min:1|max:100',
-                'is_shariah' => 'sometimes|boolean',
                 'sector' => 'sometimes|string|max:255'
             ]);
 
@@ -156,11 +167,6 @@ class StockController extends Controller
                 })
                 ->orderByRaw('relevance_score DESC, s.market_cap DESC NULLS LAST')
                 ->limit($limit);
-
-            // Apply additional filters
-            if ($request->has('is_shariah')) {
-                $query->where('s.is_shariah', $request->boolean('is_shariah'));
-            }
 
             if ($request->has('sector')) {
                 $query->where('sec.name', 'ILIKE', '%' . $request->get('sector') . '%');
@@ -462,7 +468,7 @@ class StockController extends Controller
 
             $stockIds = $stocks->pluck('stock_id')->toArray();
 
-            $indexTags = [];
+            $indices = [];
             if (count($stockIds) > 0) {
                 $placeholders = implode(',', array_fill(0, count($stockIds), '?'));
                 $indexData = DB::select("
@@ -476,11 +482,11 @@ class StockController extends Controller
                 ", $stockIds);
 
                 foreach ($indexData as $item) {
-                    $indexTags[$item->stock_id] = json_decode($item->tags, true) ?? [];
+                    $indices[$item->stock_id] = json_decode($item->tags, true) ?? [];
                 }
             }
 
-            $data = $stocks->map(function ($stock) use ($indexTags) {
+            $data = $stocks->map(function ($stock) use ($indices) {
                 return [
                     'stock_id' => $stock->stock_id,
                     'symbol' => $stock->symbol,
@@ -494,7 +500,7 @@ class StockController extends Controller
                     'free_float' => $stock->free_float,
                     'free_float_percent' => $stock->free_float_percent,
                     'latest_price' => $stock->latest_price,
-                    'index_tags' => $indexTags[$stock->stock_id] ?? []
+                    'indices' => $indices[$stock->stock_id] ?? []
                 ];
             });
 
@@ -590,8 +596,6 @@ class StockController extends Controller
                 [$resolvedStart, $resolvedEnd]
             )->cnt;
 
-            $shariahFilter = $shariahOnly || $mansoorSpecial ? 'AND s.is_shariah = true' : '';
-
             $mansoorFilter = '';
             if ($mansoorSpecial) {
                 $mansoorService = new MansoorSpecialFilterService();
@@ -685,7 +689,6 @@ class StockController extends Controller
                 LEFT  JOIN vol_ma20    vm20 ON vm20.stock_id  = s.id
                 WHERE s.is_active = true
                   AND s.market_cap > 0
-                  {$shariahFilter}
                   {$mansoorFilter}
                 ORDER BY s.symbol ASC
             ", [
@@ -726,7 +729,6 @@ class StockController extends Controller
                 'min_free_float_pct' => 'sometimes|numeric|min:0|max:100',
                 'max_free_float_pct' => 'sometimes|numeric|min:0|max:100',
                 'min_change_threshold' => 'sometimes|numeric|min:0',
-                'is_shariah' => 'sometimes|boolean'
             ]);
 
             if ($validator->fails()) {
@@ -738,7 +740,6 @@ class StockController extends Controller
             $minFreeFloat = $request->get('min_free_float_pct', 15.0);
             $maxFreeFloat = $request->get('max_free_float_pct', 50.0);
             $minChangeThreshold = $request->get('min_change_threshold', 10.0);
-            $isShariah = $request->has('is_shariah') ? $request->boolean('is_shariah') : null;
 
             // Get insider trading data with cumulative changes
             $insiderData = DB::select("
@@ -770,7 +771,6 @@ class StockController extends Controller
                     WHERE sca.change_date BETWEEN ? AND ?
                       AND s.is_active = true
                       AND s.market_cap > 0
-                      " . ($isShariah !== null ? "AND s.is_shariah = ?" : "") . "
                       AND s.total_shares_outstanding > 0
                       AND s.free_float > 0
                       AND ((s.free_float::numeric / s.total_shares_outstanding::numeric) * 100) BETWEEN ? AND ?
@@ -805,13 +805,10 @@ class StockController extends Controller
                         ABS(COALESCE(cc.cumulative_ff_change_pct, 0)),
                         ABS(COALESCE(cc.cumulative_shares_change_pct, 0))
                     ) DESC
-            ", array_filter([
+            ", [
                 $startDate, $endDate,
-                $isShariah !== null ? $isShariah : null,
                 $minFreeFloat, $maxFreeFloat, $minChangeThreshold, $minChangeThreshold
-            ], function ($value) {
-                return $value !== null;
-            }));
+            ]);
 
             // Categorize the results
             $categorized = [
