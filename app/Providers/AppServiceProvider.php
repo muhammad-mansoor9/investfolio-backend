@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 namespace App\Providers;
 
 use Illuminate\Support\ServiceProvider;
@@ -19,4 +19,3 @@ class AppServiceProvider extends ServiceProvider
         Sanctum::usePersonalAccessTokenModel(\App\Models\PersonalAccessToken::class);
     }
 }
-
