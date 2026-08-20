@@ -21,4 +21,4 @@ class ConversationFile extends PgsqlModel
         return \Modules\ChattingModule\Database\factories\ConversationFileFactory::new();
     }
 }
-// Sync marker: 2026-08-20 17:39:39
+

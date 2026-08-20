@@ -20,4 +20,4 @@ class AppServiceProvider extends ServiceProvider
         Sanctum::usePersonalAccessTokenModel(\App\Models\PersonalAccessToken::class);
     }
 }
-// Sync marker: 2026-08-20 17:39:39
+

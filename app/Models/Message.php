@@ -27,4 +27,4 @@ class Message extends PgsqlModel
         return $this->belongsTo(User::class)->select('id', 'first_name', 'last_name', 'profile_image');
     }
 }
-// Sync marker: 2026-08-20 17:39:39
+

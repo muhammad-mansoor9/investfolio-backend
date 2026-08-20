@@ -20,4 +20,4 @@ class Chat extends PgsqlModel
         return $this->hasMany(ChatMember::class, 'chat_id');
     }
 }
-// Sync marker: 2026-08-20 17:39:39
+

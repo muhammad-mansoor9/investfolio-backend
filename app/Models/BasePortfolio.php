@@ -224,4 +224,4 @@ class BasePortfolio extends PgsqlModel
         })->values();
     }
 }
-// Sync marker: 2026-08-20 17:39:39
+

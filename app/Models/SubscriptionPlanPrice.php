@@ -54,4 +54,4 @@ class SubscriptionPlanPrice extends PgsqlModel
         return number_format($this->price, 2);
     }
 }
-// Sync marker: 2026-08-20 17:39:39
+

@@ -37,4 +37,4 @@ class ChannelList extends PgsqlModel
         return \Modules\ChattingModule\Database\factories\ChannelListFactory::new();
     }
 }
-// Sync marker: 2026-08-20 17:39:39
+

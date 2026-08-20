@@ -22,4 +22,4 @@ class Admin extends Authenticatable
         return $this->belongsTo(AdminRole::class, 'admin_role_id');
     }
 }
-// Sync marker: 2026-08-20 17:39:39
+

@@ -28,4 +28,4 @@ class SubscriptionFeature extends PgsqlModel
             ->withTimestamps();
     }
 }
-// Sync marker: 2026-08-20 17:39:39
+

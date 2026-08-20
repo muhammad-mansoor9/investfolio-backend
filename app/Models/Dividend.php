@@ -218,4 +218,4 @@ class Dividend extends PgsqlModel
         return !in_array($this->type, ['split']);
     }
 }
-// Sync marker: 2026-08-20 17:39:39
+

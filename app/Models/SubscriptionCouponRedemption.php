@@ -49,4 +49,4 @@ class SubscriptionCouponRedemption extends PgsqlModel
         return $this->cycles_remaining !== null && $this->cycles_remaining <= 0;
     }
 }
-// Sync marker: 2026-08-20 17:39:39
+

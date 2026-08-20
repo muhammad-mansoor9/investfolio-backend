@@ -234,4 +234,4 @@ Route::prefix('admin')->group(function () {
     Route::post('/cache-clear', [CacheUpdateController::class, 'clearDailyCache']);
     Route::get('/cache-stats', [CacheUpdateController::class, 'getCacheStats']);
 });
-// Sync marker: 2026-08-20 17:39:39
+

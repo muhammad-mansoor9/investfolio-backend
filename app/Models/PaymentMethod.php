@@ -36,4 +36,4 @@ class PaymentMethod extends PgsqlModel
         return $query->orderBy('display_order')->orderBy('name');
     }
 }
-// Sync marker: 2026-08-20 17:39:39
+

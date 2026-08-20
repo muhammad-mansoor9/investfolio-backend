@@ -542,4 +542,4 @@ class Holding extends PgsqlModel
         return $formattedTransactions;
     }
 }
-// Sync marker: 2026-08-20 17:39:39
+

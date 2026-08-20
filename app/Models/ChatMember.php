@@ -26,4 +26,4 @@ class ChatMember extends PgsqlModel
         return $this->hasOne(Chat::class, 'chat_id')->select(['id', 'name']);
     }
 }
-// Sync marker: 2026-08-20 17:39:39
+
