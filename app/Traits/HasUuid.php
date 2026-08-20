@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 namespace App\Traits;
 
 use Ramsey\Uuid\Nonstandard\Uuid;
@@ -32,4 +32,3 @@ trait HasUuid
         }, 0);
     }
 }
-
