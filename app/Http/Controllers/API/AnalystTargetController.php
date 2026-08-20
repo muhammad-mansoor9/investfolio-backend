@@ -1,5 +1,4 @@
-﻿<?php
-
+<?php
 namespace App\Http\Controllers\API;
 
 use App\Models\AnalystTarget;
@@ -165,4 +164,3 @@ class AnalystTargetController extends BaseController
         }
     }
 }
-
