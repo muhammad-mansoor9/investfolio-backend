@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace App\Providers;
 
@@ -9,17 +9,6 @@ class AppServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
-        $aliases = [
-            'Investfolio\InvestfolioShared\Traits\HasUuid'              => \App\Traits\HasUuid::class,
-            'Investfolio\InvestfolioShared\Traits\HasMarketData'        => \App\Traits\HasMarketData::class,
-            'Investfolio\InvestfolioShared\Traits\HasConnectedAccounts' => \App\Traits\HasConnectedAccounts::class,
-        ];
-
-        foreach ($aliases as $abstract => $concrete) {
-            if (!class_exists($abstract)) {
-                class_alias($concrete, $abstract);
-            }
-        }
     }
 
     public function boot(): void
@@ -31,3 +20,4 @@ class AppServiceProvider extends ServiceProvider
         Sanctum::usePersonalAccessTokenModel(\App\Models\PersonalAccessToken::class);
     }
 }
+// Sync marker: 2026-08-20 17:39:39

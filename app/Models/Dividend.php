@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace App\Models;
 
@@ -7,7 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Str;
-use Investfolio\InvestfolioShared\Traits\HasUuid;
+use App\Traits\HasUuid;
 
 class Dividend extends PgsqlModel
 {
@@ -218,3 +218,4 @@ class Dividend extends PgsqlModel
         return !in_array($this->type, ['split']);
     }
 }
+// Sync marker: 2026-08-20 17:39:39

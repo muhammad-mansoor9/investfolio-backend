@@ -1,7 +1,7 @@
-<?php
+﻿<?php
 namespace App\Models;
 
-use Investfolio\InvestfolioShared\Traits\HasUuid;
+use App\Traits\HasUuid;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
@@ -22,3 +22,4 @@ class Admin extends Authenticatable
         return $this->belongsTo(AdminRole::class, 'admin_role_id');
     }
 }
+// Sync marker: 2026-08-20 17:39:39

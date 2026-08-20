@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 declare(strict_types=1);
 
@@ -12,7 +12,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Str;
 use Investfolio\InvestfolioShared\Services\PortfolioService;
 use Investfolio\InvestfolioShared\Services\TaxService;
-use Investfolio\InvestfolioShared\Traits\HasUuid;
+use App\Traits\HasUuid;
 
 class BasePortfolio extends PgsqlModel
 {
@@ -224,3 +224,4 @@ class BasePortfolio extends PgsqlModel
         })->values();
     }
 }
+// Sync marker: 2026-08-20 17:39:39

@@ -1,7 +1,7 @@
-<?php
+﻿<?php
 namespace App\Models;
 
-use Investfolio\InvestfolioShared\Traits\HasUuid;
+use App\Traits\HasUuid;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
@@ -21,3 +21,4 @@ class ConversationFile extends PgsqlModel
         return \Modules\ChattingModule\Database\factories\ConversationFileFactory::new();
     }
 }
+// Sync marker: 2026-08-20 17:39:39

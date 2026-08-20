@@ -1,8 +1,8 @@
-<?php
+﻿<?php
 
 namespace App\Models;
 
-use Investfolio\InvestfolioShared\Traits\HasUuid;
+use App\Traits\HasUuid;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
@@ -70,3 +70,4 @@ class SubscriptionFeatureUsage extends PgsqlModel
         return $this->usage_count >= $planFeature->usage_limit;
     }
 }
+// Sync marker: 2026-08-20 17:39:39

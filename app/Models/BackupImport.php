@@ -1,11 +1,11 @@
-<?php
+﻿<?php
 
 declare(strict_types=1);
 
 namespace App\Models;
 
 use Investfolio\InvestfolioShared\Jobs\BackupImportJob;
-use Investfolio\InvestfolioShared\Traits\HasUuid;
+use App\Traits\HasUuid;
 use Investfolio\InvestfolioShared\Models\User;
 use Illuminate\Database\Eloquent\Model;
 
@@ -57,3 +57,4 @@ class BackupImport extends PgsqlModel
         return $this->belongsTo(User::class);
     }
 }
+// Sync marker: 2026-08-20 17:39:39

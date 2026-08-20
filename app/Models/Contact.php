@@ -1,7 +1,7 @@
-<?php
+﻿<?php
 namespace App\Models;
 
-use Investfolio\InvestfolioShared\Traits\HasUuid;
+use App\Traits\HasUuid;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
@@ -15,3 +15,4 @@ class Contact extends PgsqlModel
         'updated_at' => 'datetime',
     ];
 }
+// Sync marker: 2026-08-20 17:39:39

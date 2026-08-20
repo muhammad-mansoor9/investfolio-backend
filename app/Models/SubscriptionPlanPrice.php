@@ -1,8 +1,8 @@
-<?php
+﻿<?php
 
 namespace App\Models;
 
-use Investfolio\InvestfolioShared\Traits\HasUuid;
+use App\Traits\HasUuid;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
@@ -54,3 +54,4 @@ class SubscriptionPlanPrice extends PgsqlModel
         return number_format($this->price, 2);
     }
 }
+// Sync marker: 2026-08-20 17:39:39

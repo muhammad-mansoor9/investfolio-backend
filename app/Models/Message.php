@@ -1,7 +1,7 @@
-<?php
+﻿<?php
 namespace App\Models;
 
-use Investfolio\InvestfolioShared\Traits\HasUuid;
+use App\Traits\HasUuid;
 use Investfolio\InvestfolioShared\Models\User;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -27,3 +27,4 @@ class Message extends PgsqlModel
         return $this->belongsTo(User::class)->select('id', 'first_name', 'last_name', 'profile_image');
     }
 }
+// Sync marker: 2026-08-20 17:39:39

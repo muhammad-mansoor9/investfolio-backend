@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 declare(strict_types=1);
 
@@ -27,3 +27,4 @@ class BrokerResearch extends PgsqlModel
         return $this->belongsTo(Stock::class);
     }
 }
+// Sync marker: 2026-08-20 17:39:39

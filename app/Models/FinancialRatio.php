@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 declare(strict_types=1);
 
@@ -100,3 +100,4 @@ class FinancialRatio extends PgsqlModel
         return (int) ($this->metadata['display_order'] ?? 999);
     }
 }
+// Sync marker: 2026-08-20 17:39:39

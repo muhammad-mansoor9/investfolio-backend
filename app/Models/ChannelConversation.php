@@ -1,7 +1,7 @@
-<?php
+﻿<?php
 namespace App\Models;
 
-use Investfolio\InvestfolioShared\Traits\HasUuid;
+use App\Traits\HasUuid;
 use Investfolio\InvestfolioShared\Models\User;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -29,3 +29,4 @@ class ChannelConversation extends PgsqlModel
         return $this->belongsTo(ChannelList::class);
     }
 }
+// Sync marker: 2026-08-20 17:39:39

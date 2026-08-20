@@ -1,11 +1,11 @@
-<?php
+﻿<?php
 
 declare(strict_types=1);
 
 namespace App\Models;
 
 use Investfolio\InvestfolioShared\Traits\HasMarketData;
-use Investfolio\InvestfolioShared\Traits\HasUuid;
+use App\Traits\HasUuid;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Arr;
@@ -542,3 +542,4 @@ class Holding extends PgsqlModel
         return $formattedTransactions;
     }
 }
+// Sync marker: 2026-08-20 17:39:39

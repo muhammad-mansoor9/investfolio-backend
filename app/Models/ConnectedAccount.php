@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 declare(strict_types=1);
 
@@ -8,7 +8,7 @@ use Illuminate\Database\Eloquent\Concerns\HasTimestamps;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Investfolio\InvestfolioShared\Traits\HasUuid;
+use App\Traits\HasUuid;
 
 class ConnectedAccount extends PgsqlModel
 {
@@ -55,3 +55,4 @@ class ConnectedAccount extends PgsqlModel
         return $this->belongsTo(User::class);
     }
 }
+// Sync marker: 2026-08-20 17:39:39

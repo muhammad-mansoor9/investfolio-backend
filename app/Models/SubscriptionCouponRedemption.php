@@ -1,8 +1,8 @@
-<?php
+﻿<?php
 
 namespace App\Models;
 
-use Investfolio\InvestfolioShared\Traits\HasUuid;
+use App\Traits\HasUuid;
 use Investfolio\InvestfolioShared\Models\User;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -49,3 +49,4 @@ class SubscriptionCouponRedemption extends PgsqlModel
         return $this->cycles_remaining !== null && $this->cycles_remaining <= 0;
     }
 }
+// Sync marker: 2026-08-20 17:39:39

@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 use App\Http\Controllers\API\AnalystTargetController;
 use App\Http\Controllers\API\AuthController;
@@ -36,7 +36,7 @@ use App\Http\Controllers\API\DataIntegrityController;
 use App\Http\Controllers\API\MarketPulseController;
 use Illuminate\Support\Facades\Route;
 
-// Auth — public
+// Auth â€” public
 Route::post('auth/register', [AuthController::class, 'register'])->middleware('throttle:10,1');
 Route::post('auth/login', [AuthController::class, 'login'])->middleware('throttle:10,1');
 Route::get('auth/google/redirect', [AuthController::class, 'googleRedirect']);
@@ -44,7 +44,7 @@ Route::get('auth/google/callback', [AuthController::class, 'googleCallback']);
 Route::post('auth/forgot-password', [AuthController::class, 'forgotPassword'])->middleware('throttle:5,1');
 Route::post('auth/reset-password', [AuthController::class, 'resetPassword'])->middleware('throttle:5,1');
 
-// Landing Page — public
+// Landing Page â€” public
 Route::prefix('landing')->group(function () {
     Route::post('contact-us', [LandingPageController::class, 'contactUs'])->middleware('throttle:5,1');
     Route::post('newsletter-signup', [LandingPageController::class, 'newsletterSignup'])->middleware('throttle:5,1');
@@ -127,7 +127,7 @@ Route::prefix('market-intelligence')->group(function () {
     Route::get('/stock-detail', [MarketIntelligenceController::class, 'getStockDetail']);
 });
 
-// Market Pulse — public
+// Market Pulse â€” public
 Route::get('/market-pulse', [MarketPulseController::class, 'getMarketPulse']);
 Route::prefix('sector-leadership')->group(function () {
     Route::get('/', [MarketPulseController::class, 'getSectorLeadership']);
@@ -135,7 +135,7 @@ Route::prefix('sector-leadership')->group(function () {
     Route::get('/{sectorId}/stocks', [MarketPulseController::class, 'getSectorStocks']);
 });
 
-// Data Integrity — public, throttled
+// Data Integrity â€” public, throttled
 Route::prefix('data-integrity')->middleware('throttle:60,1')->group(function () {
     Route::get('/daily', [DataIntegrityController::class, 'getDailyIntegrity']);
     Route::get('/daily/{date}', [DataIntegrityController::class, 'getDailyDetails']);
@@ -190,7 +190,7 @@ Route::prefix('screener')->group(function () {
 
 Route::get('/broker-research', [BrokerResearchController::class, 'getBrokerResearch']);
 
-// Valuation calculator — public calculate, authenticated save/retrieve/delete
+// Valuation calculator â€” public calculate, authenticated save/retrieve/delete
 Route::prefix('valuations')->group(function () {
     Route::post('/calculate', [ValuationController::class, 'calculate']);
 });
@@ -220,15 +220,18 @@ Route::middleware('auth:sanctum')->group(function () {
 
     Route::prefix('analyst-targets')->group(function () {
         Route::get('/', [AnalystTargetController::class, 'index']);
+        Route::get('/active', [AnalystTargetController::class, 'active']);
+        Route::get('/performance', [AnalystTargetController::class, 'performance']);
         Route::post('/', [AnalystTargetController::class, 'store']);
         Route::patch('/{id}/status', [AnalystTargetController::class, 'updateStatus']);
         Route::delete('/{id}', [AnalystTargetController::class, 'destroy']);
     });
 });
 
-// Admin/Webhook routes — cache updates from daily job
+// Admin/Webhook routes â€” cache updates from daily job
 Route::prefix('admin')->group(function () {
     Route::post('/cache-update', [CacheUpdateController::class, 'updateDailyCache']);
     Route::post('/cache-clear', [CacheUpdateController::class, 'clearDailyCache']);
     Route::get('/cache-stats', [CacheUpdateController::class, 'getCacheStats']);
 });
+// Sync marker: 2026-08-20 17:39:39

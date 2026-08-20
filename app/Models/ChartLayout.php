@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace App\Models;
 
@@ -23,3 +23,4 @@ class ChartLayout extends PgsqlModel
         return $this->belongsTo(User::class);
     }
 }
+// Sync marker: 2026-08-20 17:39:39

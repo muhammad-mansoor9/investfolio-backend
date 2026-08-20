@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 declare(strict_types=1);
 
@@ -6,7 +6,7 @@ namespace App\Models;
 
 use Investfolio\InvestfolioShared\Interfaces\MarketData\MarketDataInterface;
 use Investfolio\InvestfolioShared\Traits\HasMarketData;
-use Investfolio\InvestfolioShared\Traits\HasUuid;
+use App\Traits\HasUuid;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -147,3 +147,4 @@ class Split extends PgsqlModel
         }
     }
 }
+// Sync marker: 2026-08-20 17:39:39
