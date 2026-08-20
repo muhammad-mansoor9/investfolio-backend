@@ -1,5 +1,4 @@
-﻿<?php
-
+<?php
 declare(strict_types=1);
 
 namespace App\Models;
@@ -48,4 +47,3 @@ class AnalystTarget extends Model
         return $this->belongsTo(Stock::class);
     }
 }
-
