@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
+use App\Services\SectorPEService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -10,8 +11,7 @@ use Illuminate\Support\Facades\DB;
 class SectorController extends Controller
 {
     /**
-     * Get all sectors with active stock counts for dropdowns
-     * Used by: Screener, Volume Analysis, Sector Volume History
+     * Get all sectors with active stock counts and PE metrics
      *
      * @param Request $request
      * @return JsonResponse
@@ -19,6 +19,10 @@ class SectorController extends Controller
     public function getAllSectors(Request $request): JsonResponse
     {
         try {
+            $calculationDate = $request->query('date', date('Y-m-d'));
+
+            $sectorPEData = SectorPEService::calculateAll($calculationDate);
+
             $sectors = DB::table('sectors as sec')
                 ->select([
                     'sec.id',
@@ -31,17 +35,25 @@ class SectorController extends Controller
                 ->orderBy('sec.name', 'asc')
                 ->get();
 
-            $formattedSectors = $sectors->map(function ($sector) {
+            $formattedSectors = $sectors->map(function ($sector) use ($sectorPEData) {
+                $sectorId = $sector->id;
+                $peData = $sectorPEData[$sectorId] ?? null;
+
                 return [
-                    'id' => $sector->id,
+                    'id' => $sectorId,
                     'name' => $sector->name,
                     'stock_count' => (int) $sector->stock_count,
+                    'sector_pe' => $peData ? (float) $peData['sector_pe'] : null,
+                    'sector_top_pe' => $peData ? (float) $peData['sector_top_pe'] : null,
+                    'top_6_count' => $peData ? (int) $peData['top_6_count'] : 0,
+                    'all_stocks_count' => $peData ? (int) $peData['all_stocks_count'] : 0,
                 ];
             });
 
             return $this->successResponse([
                 'sectors' => $formattedSectors,
                 'total_results' => $formattedSectors->count(),
+                'calculation_date' => $calculationDate,
             ], 'Sectors retrieved successfully');
 
         } catch (\Exception $e) {

@@ -15,7 +15,6 @@ use App\Http\Controllers\API\IndexController;
 use App\Http\Controllers\API\InsiderTradingController;
 use App\Http\Controllers\API\LandingPageController;
 use App\Http\Controllers\API\LatestResultsController;
-use App\Http\Controllers\API\PEAnalysisController;
 use App\Http\Controllers\API\PerformanceAnalysisController;
 use App\Http\Controllers\API\RevenueRankingController;
 use App\Http\Controllers\API\SectorController;
@@ -159,8 +158,6 @@ Route::prefix('sector-volume-history')->group(function () {
     Route::get('/data', [SectorVolumeHistoryController::class, 'getSectorVolumeAnalysis']);
 });
 
-Route::get('/pe-analysis', [PEAnalysisController::class, 'getPEAnalysis']);
-Route::post('/pe/cache', [PEAnalysisController::class, 'cacheSectorAndStockPE']);
 Route::get('/fair-value-calculation', [FairValueCalculationController::class, 'getFairValueCalculation']);
 Route::get('/stock-retracement', [StockRetracementController::class, 'getStockRetracement']);
 Route::post('/technical-analysis/data', [TechnicalAnalysisController::class, 'getData']);
