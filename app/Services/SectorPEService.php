@@ -7,65 +7,50 @@ use Illuminate\Support\Facades\DB;
 class SectorPEService
 {
     /**
-     * Calculate sector PE metrics for all sectors
+     * Calculate weighted sector PE metrics for all sectors
+     *
+     * Weighted formula: Sector PE = SUM(market_cap) / SUM((market_cap * ttm_eps) / latest_price)
+     * This weights larger companies more heavily in the sector average.
      *
      * Returns:
-     * - sector_pe: Average PE of ALL active stocks (excluding ttm_eps=0)
-     * - sector_top_pe: Average PE of top 6 by market cap
+     * - sector_pe: Weighted PE of ALL active stocks
+     * - sector_top_pe: Weighted PE of top 6 by market cap
      *
      * @param string $calculationDate
      * @return array Keyed by sector_id with sector_pe and sector_top_pe
      */
     public static function calculateAll(string $calculationDate): array
     {
-        // Query 1: Calculate sector_pe (ALL active stocks, excluding ttm_eps=0)
+        // Query 1: Calculate weighted sector_pe (ALL active stocks)
         $allStocksQuery = "
-        WITH period_dates AS (
+        WITH quarterly_ranked AS (
             SELECT
-                id,
-                stock_id,
-                period_type,
-                period_name,
-                CASE
-                    WHEN period_name ~ '^\w+\s+''[0-9]{2}$' THEN
-                        (DATE_TRUNC('month',
-                            make_date(2000 + CAST(SUBSTRING(period_name FROM '[0-9]+') AS INT),
-                            CASE SUBSTRING(period_name, 1, 3)
-                                WHEN 'Mar' THEN 3
-                                WHEN 'Jun' THEN 6
-                                WHEN 'Sep' THEN 9
-                                WHEN 'Dec' THEN 12
-                                ELSE 12
-                            END,
-                            1)
-                        ) + INTERVAL '1 month' - INTERVAL '1 day')::date
-                    ELSE NULL
-                END as period_end_date,
-                data
-            FROM financial_results
+                fr.stock_id,
+                fr.eps,
+                ROW_NUMBER() OVER (PARTITION BY fr.stock_id ORDER BY
+                    make_date(
+                        2000 + CAST(SUBSTRING(fr.quarter FROM '[0-9]+') AS INT),
+                        CASE SUBSTRING(fr.quarter, 1, 3)
+                            WHEN 'Mar' THEN 3
+                            WHEN 'Jun' THEN 6
+                            WHEN 'Sep' THEN 9
+                            WHEN 'Dec' THEN 12
+                        END,
+                        1
+                    ) DESC
+                ) as rn
+            FROM financial_results fr
+            WHERE fr.eps IS NOT NULL AND fr.eps > 0
         ),
-        all_quarterly_ranked AS (
-            SELECT
-                pd.stock_id,
-                (pd.data->>'eps')::numeric as eps_value,
-                ROW_NUMBER() OVER (PARTITION BY pd.stock_id ORDER BY pd.period_end_date DESC) as rn
-            FROM period_dates pd
-            WHERE pd.period_type = 'quarterly'
-              AND pd.period_end_date <= :calc_date::date
-              AND pd.data->>'eps' IS NOT NULL
-        ),
-        all_ttm_eps AS (
+        ttm_eps_data AS (
             SELECT
                 stock_id,
-                CASE
-                    WHEN COUNT(*) >= 2 THEN SUM(eps_value)
-                    ELSE NULL
-                END as ttm_eps
-            FROM all_quarterly_ranked
+                SUM(eps) as ttm_eps
+            FROM quarterly_ranked
             WHERE rn <= 4
             GROUP BY stock_id
         ),
-        all_latest_prices AS (
+        latest_prices AS (
             SELECT
                 s.id as stock_id,
                 sp.close as latest_price
@@ -77,29 +62,38 @@ class SectorPEService
             ) sp ON true
             WHERE s.is_active = true AND s.market_cap > 0
         ),
-        all_pe_ratios AS (
+        stock_data_with_ttm AS (
             SELECT
                 s.sector_id,
-                COALESCE(alp.latest_price, 0) as latest_price,
-                COALESCE(ate.ttm_eps, 0) as ttm_eps,
-                CASE
-                    WHEN COALESCE(alp.latest_price, 0) > 0 AND COALESCE(ate.ttm_eps, 0) > 0
-                        THEN ROUND((alp.latest_price / ate.ttm_eps)::numeric, 2)
-                    ELSE NULL
-                END as pe_ratio
+                s.id,
+                s.symbol,
+                s.market_cap,
+                COALESCE(lp.latest_price, 0) as latest_price,
+                COALESCE(ttm.ttm_eps, 0) as ttm_eps
             FROM stocks s
-            LEFT JOIN all_latest_prices alp ON s.id = alp.stock_id
-            LEFT JOIN all_ttm_eps ate ON s.id = ate.stock_id
+            LEFT JOIN latest_prices lp ON s.id = lp.stock_id
+            LEFT JOIN ttm_eps_data ttm ON s.id = ttm.stock_id
             WHERE s.is_active = true AND s.market_cap > 0
-              AND COALESCE(alp.latest_price, 0) > 0
-              AND COALESCE(ate.ttm_eps, 0) > 0
+              AND COALESCE(lp.latest_price, 0) > 0
+              AND COALESCE(ttm.ttm_eps, 0) > 0
+        ),
+        sector_pe_weighted AS (
+            SELECT
+                sector_id,
+                CASE
+                    WHEN SUM((market_cap::numeric * ttm_eps::numeric) / latest_price::numeric) > 0 THEN
+                        ROUND((SUM(market_cap::numeric) / SUM((market_cap::numeric * ttm_eps::numeric) / latest_price::numeric))::numeric, 2)
+                    ELSE NULL
+                END as sector_pe,
+                COUNT(*) as stocks_count
+            FROM stock_data_with_ttm
+            GROUP BY sector_id
         )
         SELECT
             sector_id,
-            ROUND(AVG(pe_ratio)::numeric, 2) as sector_pe,
-            COUNT(*) as stocks_count
-        FROM all_pe_ratios
-        GROUP BY sector_id
+            sector_pe,
+            stocks_count
+        FROM sector_pe_weighted
         ";
 
         $allStocksResults = DB::select($allStocksQuery, [
@@ -109,38 +103,14 @@ class SectorPEService
         $sectorPeMap = [];
         foreach ($allStocksResults as $row) {
             $sectorPeMap[$row->sector_id] = [
-                'sector_pe' => $row->sector_pe,
-                'all_stocks_count' => $row->stocks_count,
+                'sector_pe' => (float) $row->sector_pe,
+                'all_stocks_count' => (int) $row->stocks_count,
             ];
         }
 
-        // Query 2: Calculate sector_top_pe (Top 6 by market cap)
+        // Query 2: Calculate weighted sector_top_pe (Top 6 by market cap)
         $topSixQuery = "
-        WITH period_dates AS (
-            SELECT
-                id,
-                stock_id,
-                period_type,
-                period_name,
-                CASE
-                    WHEN period_name ~ '^\w+\s+''[0-9]{2}$' THEN
-                        (DATE_TRUNC('month',
-                            make_date(2000 + CAST(SUBSTRING(period_name FROM '[0-9]+') AS INT),
-                            CASE SUBSTRING(period_name, 1, 3)
-                                WHEN 'Mar' THEN 3
-                                WHEN 'Jun' THEN 6
-                                WHEN 'Sep' THEN 9
-                                WHEN 'Dec' THEN 12
-                                ELSE 12
-                            END,
-                            1)
-                        ) + INTERVAL '1 month' - INTERVAL '1 day')::date
-                    ELSE NULL
-                END as period_end_date,
-                data
-            FROM financial_results
-        ),
-        sector_top_6 AS (
+        WITH sector_top_6 AS (
             SELECT
                 s.sector_id,
                 s.id,
@@ -156,19 +126,29 @@ class SectorPEService
         quarterly_ranked_top_6 AS (
             SELECT
                 t6.id,
-                (pd.data->>'eps')::numeric as eps_value,
-                ROW_NUMBER() OVER (PARTITION BY t6.id ORDER BY pd.period_end_date DESC) as rn
+                fr.eps,
+                ROW_NUMBER() OVER (PARTITION BY t6.id ORDER BY
+                    make_date(
+                        2000 + CAST(SUBSTRING(fr.quarter FROM '[0-9]+') AS INT),
+                        CASE SUBSTRING(fr.quarter, 1, 3)
+                            WHEN 'Mar' THEN 3
+                            WHEN 'Jun' THEN 6
+                            WHEN 'Sep' THEN 9
+                            WHEN 'Dec' THEN 12
+                        END,
+                        1
+                    ) DESC
+                ) as rn
             FROM top_6_filtered t6
-            LEFT JOIN period_dates pd ON t6.id = pd.stock_id
-                AND pd.period_type = 'quarterly'
-                AND pd.period_end_date <= :calc_date::date
-                AND pd.data->>'eps' IS NOT NULL
+            LEFT JOIN financial_results fr ON t6.id = fr.stock_id
+                AND fr.eps IS NOT NULL
+                AND fr.eps > 0
         ),
         ttm_eps_top_6 AS (
             SELECT
                 t6.id,
                 t6.sector_id,
-                COALESCE(SUM(qr.eps_value), 0) as ttm_eps
+                COALESCE(SUM(qr.eps), 0) as ttm_eps
             FROM top_6_filtered t6
             LEFT JOIN quarterly_ranked_top_6 qr ON t6.id = qr.id AND qr.rn <= 4
             GROUP BY t6.id, t6.sector_id
@@ -185,27 +165,34 @@ class SectorPEService
             ) sp ON true
             WHERE s.is_active = true AND s.market_cap > 0
         ),
-        pe_ratios_top_6 AS (
+        top_6_with_data AS (
             SELECT
                 t6.sector_id,
+                t6.market_cap,
                 COALESCE(lp.latest_price, 0) as latest_price,
-                te.ttm_eps,
-                CASE
-                    WHEN COALESCE(lp.latest_price, 0) > 0 AND te.ttm_eps > 0
-                        THEN ROUND((lp.latest_price / te.ttm_eps)::numeric, 2)
-                    ELSE NULL
-                END as pe_ratio
+                te.ttm_eps
             FROM top_6_filtered t6
             LEFT JOIN latest_prices lp ON t6.id = lp.stock_id
             LEFT JOIN ttm_eps_top_6 te ON t6.id = te.id
             WHERE te.ttm_eps > 0
+        ),
+        sector_top_pe_weighted AS (
+            SELECT
+                sector_id,
+                CASE
+                    WHEN SUM((market_cap::numeric * ttm_eps::numeric) / latest_price::numeric) > 0 THEN
+                        ROUND((SUM(market_cap::numeric) / SUM((market_cap::numeric * ttm_eps::numeric) / latest_price::numeric))::numeric, 2)
+                    ELSE NULL
+                END as sector_top_pe,
+                COUNT(*) as stocks_count
+            FROM top_6_with_data
+            GROUP BY sector_id
         )
         SELECT
             sector_id,
-            ROUND(AVG(pe_ratio)::numeric, 2) as sector_top_pe,
-            COUNT(*) as stocks_count
-        FROM pe_ratios_top_6
-        GROUP BY sector_id
+            sector_top_pe,
+            stocks_count
+        FROM sector_top_pe_weighted
         ";
 
         $topSixResults = DB::select($topSixQuery, [
@@ -214,8 +201,8 @@ class SectorPEService
 
         foreach ($topSixResults as $row) {
             if (isset($sectorPeMap[$row->sector_id])) {
-                $sectorPeMap[$row->sector_id]['sector_top_pe'] = $row->sector_top_pe;
-                $sectorPeMap[$row->sector_id]['top_6_count'] = $row->stocks_count;
+                $sectorPeMap[$row->sector_id]['sector_top_pe'] = (float) $row->sector_top_pe;
+                $sectorPeMap[$row->sector_id]['top_6_count'] = (int) $row->stocks_count;
             }
         }
 

@@ -11,7 +11,9 @@ use Illuminate\Support\Facades\DB;
 class SectorController extends Controller
 {
     /**
-     * Get all sectors with active stock counts and PE metrics
+     * Get all sectors with active stock counts
+     * Optionally include PE metrics and/or market_cap when includes parameter is provided
+     * Usage: ?includes=pe,market_cap
      *
      * @param Request $request
      * @return JsonResponse
@@ -19,42 +21,65 @@ class SectorController extends Controller
     public function getAllSectors(Request $request): JsonResponse
     {
         try {
+            $includes = $request->query('includes', '');
+            $includesList = array_filter(array_map('trim', explode(',', $includes)));
+            $includePE = in_array('pe', $includesList);
+            $includeMarketCap = in_array('market_cap', $includesList);
             $calculationDate = $request->query('date', date('Y-m-d'));
 
-            $sectorPEData = SectorPEService::calculateAll($calculationDate);
+            $sectorPEData = $includePE ? SectorPEService::calculateAll($calculationDate) : [];
+
+            $selectColumns = [
+                'sec.id',
+                'sec.name',
+                DB::raw('COUNT(DISTINCT CASE WHEN s.is_active = true AND s.market_cap > 0 THEN s.id END) as stock_count'),
+            ];
+
+            if ($includeMarketCap) {
+                $selectColumns[] = DB::raw('SUM(CASE WHEN s.is_active = true AND s.market_cap > 0 THEN s.market_cap ELSE 0 END) as total_market_cap');
+            }
 
             $sectors = DB::table('sectors as sec')
-                ->select([
-                    'sec.id',
-                    'sec.name',
-                    DB::raw('COUNT(DISTINCT CASE WHEN s.is_active = true AND s.market_cap > 0 THEN s.id END) as stock_count')
-                ])
+                ->select($selectColumns)
                 ->leftJoin('stocks as s', 'sec.id', '=', 's.sector_id')
                 ->groupBy('sec.id', 'sec.name')
                 ->having(DB::raw('COUNT(DISTINCT CASE WHEN s.is_active = true AND s.market_cap > 0 THEN s.id END)'), '>', 0)
                 ->orderBy('sec.name', 'asc')
                 ->get();
 
-            $formattedSectors = $sectors->map(function ($sector) use ($sectorPEData) {
+            $formattedSectors = $sectors->map(function ($sector) use ($sectorPEData, $includePE, $includeMarketCap) {
                 $sectorId = $sector->id;
-                $peData = $sectorPEData[$sectorId] ?? null;
-
-                return [
+                $sectorData = [
                     'id' => $sectorId,
                     'name' => $sector->name,
                     'stock_count' => (int) $sector->stock_count,
-                    'sector_pe' => $peData ? (float) $peData['sector_pe'] : null,
-                    'sector_top_pe' => $peData ? (float) $peData['sector_top_pe'] : null,
-                    'top_6_count' => $peData ? (int) $peData['top_6_count'] : 0,
-                    'all_stocks_count' => $peData ? (int) $peData['all_stocks_count'] : 0,
                 ];
+
+                if ($includeMarketCap) {
+                    $sectorData['total_market_cap'] = (float) ($sector->total_market_cap ?? 0);
+                }
+
+                if ($includePE) {
+                    $peData = $sectorPEData[$sectorId] ?? [];
+                    $sectorData['sector_pe'] = isset($peData['sector_pe']) ? (float) $peData['sector_pe'] : null;
+                    $sectorData['sector_top_pe'] = isset($peData['sector_top_pe']) ? (float) $peData['sector_top_pe'] : null;
+                    $sectorData['top_6_count'] = isset($peData['top_6_count']) ? (int) $peData['top_6_count'] : 0;
+                    $sectorData['all_stocks_count'] = isset($peData['all_stocks_count']) ? (int) $peData['all_stocks_count'] : 0;
+                }
+
+                return $sectorData;
             });
 
-            return $this->successResponse([
+            $response = [
                 'sectors' => $formattedSectors,
                 'total_results' => $formattedSectors->count(),
-                'calculation_date' => $calculationDate,
-            ], 'Sectors retrieved successfully');
+            ];
+
+            if ($includePE) {
+                $response['calculation_date'] = $calculationDate;
+            }
+
+            return $this->successResponse($response, 'Sectors retrieved successfully');
 
         } catch (\Exception $e) {
             return $this->serverErrorResponse('An error occurred while retrieving sectors', $e);

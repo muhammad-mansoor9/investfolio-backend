@@ -139,7 +139,7 @@ class StockRetracementController extends Controller
           AND cp.current_price IS NOT NULL
           AND h52.high_52w IS NOT NULL
           AND h52.high_52w > 0
-        ORDER BY difference_percent ASC
+        ORDER BY s.symbol ASC
         ";
 
         try {
@@ -241,7 +241,7 @@ class StockRetracementController extends Controller
           AND cp.current_price IS NOT NULL
           AND l52.low_52w IS NOT NULL
           AND l52.low_52w > 0
-        ORDER BY difference_percent DESC
+        ORDER BY s.symbol ASC
         ";
 
         try {
@@ -338,7 +338,7 @@ class StockRetracementController extends Controller
           AND cp.current_price IS NOT NULL
           AND ath.ath_price IS NOT NULL
           AND ath.ath_price > 0
-        ORDER BY difference_percent ASC
+        ORDER BY s.symbol ASC
         ";
 
         try {
@@ -418,7 +418,7 @@ class StockRetracementController extends Controller
           AND cp.current_price IS NOT NULL
           AND cdp.custom_price IS NOT NULL
           AND cdp.custom_price > 0
-        ORDER BY difference_percent DESC
+        ORDER BY s.symbol ASC
         ";
 
         try {

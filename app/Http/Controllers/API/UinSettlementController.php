@@ -106,14 +106,15 @@ class UinSettlementController extends Controller
 
             // Format the data
             $data = $settlementData->map(function ($item) {
+                $item = is_array($item) ? $item : (array) $item;
                 return [
-                    'date' => $item->settlement_date, // Already formatted as YYYY-MM-DD string
-                    'trade_volume' => (float) $item->trade_volume,
-                    'trade_value' => (float) $item->trade_value,
-                    'uin_settlement_volume' => (float) $item->uin_settlement_volume,
-                    'uin_settlement_value' => (float) $item->uin_settlement_value,
-                    'uin_percentage_volume' => (float) $item->uin_percentage_volume,
-                    'uin_percentage_value' => (float) $item->uin_percentage_value,
+                    'date' => $item['settlement_date'],
+                    'trade_volume' => (float) $item['trade_volume'],
+                    'trade_value' => (float) $item['trade_value'],
+                    'uin_settlement_volume' => (float) $item['uin_settlement_volume'],
+                    'uin_settlement_value' => (float) $item['uin_settlement_value'],
+                    'uin_percentage_volume' => (float) $item['uin_percentage_volume'],
+                    'uin_percentage_value' => (float) $item['uin_percentage_value'],
                 ];
             });
 
