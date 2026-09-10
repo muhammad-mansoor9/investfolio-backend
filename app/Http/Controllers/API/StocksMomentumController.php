@@ -3,7 +3,7 @@
 namespace App\Http\Controllers\API;
 
 use App\Helpers\CacheHelper;
-use App\Services\MansoorSpecialFilterService;
+use App\Services\InvestfolioLiquidShariahFilterService;
 use App\Services\StockSignalService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -222,7 +222,7 @@ class StocksMomentumController extends BaseController
         try {
             $validator = Validator::make($request->all(), [
                 'date' => 'sometimes|date_format:Y-m-d',
-                'mansoor_special' => 'sometimes|boolean',
+                'investfolio_liquid_shariah' => 'sometimes|boolean',
             ]);
 
             if ($validator->fails()) {
@@ -230,14 +230,8 @@ class StocksMomentumController extends BaseController
             }
 
             $requestedDate = $request->get('date');
-            $mansoorSpecial = $request->boolean('mansoor_special', false);
+            $investfolioLiquidShariah = $request->boolean('investfolio_liquid_shariah', false);
 
-            if ($mansoorSpecial) {
-                $mansoorService = new MansoorSpecialFilterService();
-                if (!$mansoorService->isAuthorized($request)) {
-                    return $mansoorService->getAuthorizationError();
-                }
-            }
 
             $strategies = ['explosive', 'swing', 'positional'];
             $cutoffDate = $requestedDate ?? date('Y-m-d');
@@ -283,17 +277,17 @@ class StocksMomentumController extends BaseController
                                  ->on('ss.signal_date', '=', 'latest.latest_date');
                         });
 
-                    if ($mansoorSpecial) {
-                        $strategySignals->leftJoin('stock_prices as sp', function($join) {
-                            $join->on('ss.stock_id', '=', 'sp.stock_id')
-                                 ->on('sp.date', '=', DB::raw("(
-                                    SELECT MAX(date) FROM stock_prices sp2
-                                    WHERE sp2.stock_id = ss.stock_id
-                                 )"));
-                        });
+                    $strategySignals->leftJoin('stock_prices as sp', function($join) {
+                        $join->on('ss.stock_id', '=', 'sp.stock_id')
+                             ->on('sp.date', '=', DB::raw("(
+                                SELECT MAX(date) FROM stock_prices sp2
+                                WHERE sp2.stock_id = ss.stock_id
+                             )"));
+                    });
 
-                        $mansoorService = new MansoorSpecialFilterService();
-                        $strategySignals->whereRaw($mansoorService->getStocksWhereClause());
+                    if ($investfolioLiquidShariah) {
+                        $investfolioLiquidShariahService = new InvestfolioLiquidShariahFilterService();
+                        $strategySignals->whereRaw($investfolioLiquidShariahService->getStocksWhereClause());
                     }
 
                     $collection = $strategySignals->get();
@@ -302,15 +296,15 @@ class StocksMomentumController extends BaseController
                 if ($collection->isNotEmpty()) {
                     $collection = CacheHelper::normalize($collection);
 
-                    if ($mansoorSpecial) {
-                        $mansoorService = new MansoorSpecialFilterService();
-                        $collection = $collection->filter(function($signal) use ($mansoorService) {
+                    if ($investfolioLiquidShariah) {
+                        $investfolioLiquidShariahService = new InvestfolioLiquidShariahFilterService();
+                        $collection = $collection->filter(function($signal) use ($investfolioLiquidShariahService) {
                             $stock = DB::table('stocks')
                                 ->where('id', $signal['stock_id'])
                                 ->first();
                             if (!$stock) return false;
 
-                            return $mansoorService->passesFilter($stock);
+                            return $investfolioLiquidShariahService->passesFilter($stock);
                         });
                     }
 

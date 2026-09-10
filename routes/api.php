@@ -13,8 +13,10 @@ use App\Http\Controllers\API\FIPILIPIMarketController;
 use App\Http\Controllers\API\FIPILIPITradingController;
 use App\Http\Controllers\API\IndexController;
 use App\Http\Controllers\API\InsiderTradingController;
+use App\Http\Controllers\API\JournalController;
 use App\Http\Controllers\API\LandingPageController;
 use App\Http\Controllers\API\LatestResultsController;
+use App\Http\Controllers\API\PEAnalysisController;
 use App\Http\Controllers\API\PerformanceAnalysisController;
 use App\Http\Controllers\API\RevenueRankingController;
 use App\Http\Controllers\API\SectorController;
@@ -32,7 +34,6 @@ use App\Http\Controllers\API\VolumeController;
 use App\Http\Controllers\API\VolumeHistoryController;
 use App\Http\Controllers\API\MarketIntelligenceController;
 use App\Http\Controllers\API\DataIntegrityController;
-use App\Http\Controllers\API\MarketPulseController;
 use Illuminate\Support\Facades\Route;
 
 // Auth â€” public
@@ -126,14 +127,6 @@ Route::prefix('market-intelligence')->group(function () {
     Route::get('/stock-detail', [MarketIntelligenceController::class, 'getStockDetail']);
 });
 
-// Market Pulse â€” public
-Route::get('/market-pulse', [MarketPulseController::class, 'getMarketPulse']);
-Route::prefix('sector-leadership')->group(function () {
-    Route::get('/', [MarketPulseController::class, 'getSectorLeadership']);
-    Route::get('/{sectorId}', [MarketPulseController::class, 'getSectorDetail']);
-    Route::get('/{sectorId}/stocks', [MarketPulseController::class, 'getSectorStocks']);
-});
-
 // Data Integrity â€” public, throttled
 Route::prefix('data-integrity')->middleware('throttle:60,1')->group(function () {
     Route::get('/daily', [DataIntegrityController::class, 'getDailyIntegrity']);
@@ -163,6 +156,7 @@ Route::get('/stock-retracement', [StockRetracementController::class, 'getStockRe
 Route::post('/technical-analysis/data', [TechnicalAnalysisController::class, 'getData']);
 Route::get('/eps-ranking', [EPSRankingController::class, 'getEPSRanking']);
 Route::get('/revenue-ranking', [RevenueRankingController::class, 'getRevenueRanking']);
+Route::get('/pe-analysis', [PEAnalysisController::class, 'getPEAnalysis']);
 Route::get('/latest-results', [LatestResultsController::class, 'getLatestResults']);
 
 Route::get('/test', function () {
@@ -222,6 +216,13 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/', [AnalystTargetController::class, 'store']);
         Route::patch('/{id}/status', [AnalystTargetController::class, 'updateStatus']);
         Route::delete('/{id}', [AnalystTargetController::class, 'destroy']);
+    });
+
+    Route::prefix('journal')->group(function () {
+        Route::get('/entries', [JournalController::class, 'getEntries']);
+        Route::post('/entries', [JournalController::class, 'storeEntry']);
+        Route::get('/insights', [JournalController::class, 'getInsights']);
+        Route::post('/insights', [JournalController::class, 'requestInsight']);
     });
 });
 

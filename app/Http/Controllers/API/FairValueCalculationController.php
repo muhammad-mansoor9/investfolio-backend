@@ -4,6 +4,7 @@ namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
 use App\Services\SectorPEService;
+use App\Services\InvestfolioLiquidShariahFilterService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -28,7 +29,7 @@ class FairValueCalculationController extends Controller
 
             $validator = Validator::make($request->all(), [
                 'date' => 'nullable|date_format:Y-m-d',
-                'mansoor_special' => 'nullable|in:true,false,1,0',
+                'investfolio_liquid_shariah' => 'sometimes|boolean',
             ]);
 
             if ($validator->fails()) {
@@ -41,10 +42,11 @@ class FairValueCalculationController extends Controller
             }
 
             $calculationDate = $request->get('date', now()->toDateString());
-            $mansoorSpecial = filter_var($request->get('mansoor_special', false), FILTER_VALIDATE_BOOLEAN);
+            $investfolioLiquidShariah = $request->boolean('investfolio_liquid_shariah', false);
+
             Log::info('[FVC] Calculation parameters set', [
                 'date' => $calculationDate,
-                'mansoor_special' => $mansoorSpecial,
+                'investfolio_liquid_shariah' => $investfolioLiquidShariah,
             ]);
 
             // Get sector PE metrics using weighted formula from service
@@ -64,7 +66,7 @@ class FairValueCalculationController extends Controller
             $stocksData = $this->getStocksWithFairValue(
                 $calculationDate,
                 $sectorPE,
-                $mansoorSpecial
+                $investfolioLiquidShariah
             );
 
             Log::info('[FVC] Fair value calculation completed successfully', [
@@ -106,19 +108,19 @@ class FairValueCalculationController extends Controller
      *
      * @param string $calculationDate
      * @param array $sectorAveragePE
-     * @param bool $mansoorSpecial
+     * @param bool $investfolioLiquidShariah
      * @return array
      */
     private function getStocksWithFairValue(
         $calculationDate,
         $sectorAveragePE,
-        $mansoorSpecial
+        $investfolioLiquidShariah
     ): array {
 
         Log::info('[FVC::getStocksWithFairValue] Starting stock data fetch', [
             'calculation_date' => $calculationDate,
             'sector_count' => count($sectorAveragePE),
-            'mansoor_special' => $mansoorSpecial,
+            'investfolio_liquid_shariah' => $investfolioLiquidShariah,
         ]);
 
         $query = "
@@ -142,7 +144,7 @@ class FairValueCalculationController extends Controller
                     ) DESC
                 ) as rn
             FROM financial_results fr
-            WHERE fr.eps IS NOT NULL AND fr.eps > 0
+            WHERE fr.eps IS NOT NULL
         ),
         q3_metrics AS (
             -- Calculate 3Q metrics (Q1, Q2, Q3 = latest 3 quarters)
@@ -229,6 +231,8 @@ class FairValueCalculationController extends Controller
         $processedResults = [];
         $skipped_count = 0;
 
+        $filterService = $investfolioLiquidShariah ? new InvestfolioLiquidShariahFilterService() : null;
+
         foreach ($results as $row) {
             Log::debug('[FVC::getStocksWithFairValue] Processing stock', [
                 'symbol' => $row->symbol,
@@ -239,19 +243,19 @@ class FairValueCalculationController extends Controller
                 'price_at_q3' => $row->price_at_q3_announcement,
             ]);
 
-            $sector_pe = $sectorAveragePE[$row->sector_id]['sector_pe'] ?? null;
-            if ($sector_pe === null || $sector_pe <= 0) {
-                Log::debug('[FVC::getStocksWithFairValue] Skipped: No sector PE', [
+            if ($investfolioLiquidShariah && !$filterService->passesFilter($row)) {
+                Log::debug('[FVC::getStocksWithFairValue] Skipped: Investfolio Liquid Shariah filter not met', [
                     'symbol' => $row->symbol,
-                    'sector_id' => $row->sector_id,
                 ]);
                 $skipped_count++;
                 continue;
             }
 
-            if ($mansoorSpecial && !$this->passesMansoorCriteria($row)) {
-                Log::debug('[FVC::getStocksWithFairValue] Skipped: Mansoor criteria not met', [
+            $sector_pe = $sectorAveragePE[$row->sector_id]['sector_pe'] ?? null;
+            if ($sector_pe === null || $sector_pe <= 0) {
+                Log::debug('[FVC::getStocksWithFairValue] Skipped: No sector PE', [
                     'symbol' => $row->symbol,
+                    'sector_id' => $row->sector_id,
                 ]);
                 $skipped_count++;
                 continue;
@@ -356,22 +360,4 @@ class FairValueCalculationController extends Controller
         return $processedResults;
     }
 
-    /**
-     * Check if stock passes Mansoor special criteria
-     *
-     * TODO: Implement actual Mansoor special criteria logic based on business rules
-     * Current placeholder: Not yet implemented. Throws exception if requested.
-     *
-     * @param object $stock
-     * @return bool
-     * @throws \BadMethodCallException
-     */
-    private function passesMansoorCriteria($stock): bool
-    {
-        throw new \BadMethodCallException(
-            'Mansoor special criteria filter is not yet implemented. ' .
-            'Please define the business rules and implement the logic in ' .
-            self::class . '::' . __FUNCTION__
-        );
-    }
 }

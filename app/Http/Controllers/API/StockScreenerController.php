@@ -34,13 +34,16 @@ class StockScreenerController extends Controller
     {
         try {
             $validated = $request->validate([
-                'sector_id' => 'required|uuid|exists:sectors,id'
+                'sector_id' => 'required|uuid|exists:sectors,id',
+                'investfolio_liquid_shariah' => 'sometimes|boolean'
             ]);
 
             $sectorId = $validated['sector_id'];
-            Log::info('Fetching screener data', ['sector_id' => $sectorId]);
+            $investfolioLiquidShariah = $request->boolean('investfolio_liquid_shariah', false);
 
-            $rawData = $this->screenerService->getScreenerData($sectorId);
+            Log::info('Fetching screener data', ['sector_id' => $sectorId, 'investfolio_liquid_shariah' => $investfolioLiquidShariah]);
+
+            $rawData = $this->screenerService->getScreenerData($sectorId, $investfolioLiquidShariah);
             $data = $this->transformData($rawData);
 
             Log::info('Screener data fetched successfully', [

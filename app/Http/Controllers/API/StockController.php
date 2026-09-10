@@ -4,7 +4,7 @@ namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
 use App\Helpers\CacheHelper;
-use App\Services\MansoorSpecialFilterService;
+use App\Services\InvestfolioLiquidShariahFilterService;
 use App\Services\StockService;
 use App\Services\StockPriceService;
 use Illuminate\Http\JsonResponse;
@@ -406,7 +406,7 @@ class StockController extends Controller
             $validator = Validator::make($request->all(), [
                 'shariah_only' => 'sometimes|boolean',
                 'index_id' => 'sometimes|uuid',
-                'mansoor_special' => 'sometimes|boolean'
+                'investfolio_liquid_shariah' => 'sometimes|boolean'
             ]);
 
             if ($validator->fails()) {
@@ -415,14 +415,8 @@ class StockController extends Controller
 
             $shariahOnly = $request->boolean('shariah_only', false);
             $indexId = $request->get('index_id');
-            $mansoorSpecial = $request->boolean('mansoor_special', false);
+            $investfolioLiquidShariah = $request->boolean('investfolio_liquid_shariah', false);
 
-            if ($mansoorSpecial) {
-                $mansoorService = new MansoorSpecialFilterService();
-                if (!$mansoorService->isAuthorized($request)) {
-                    return $mansoorService->getAuthorizationError();
-                }
-            }
 
             $query = DB::table('stocks as s')
                 ->leftJoin('sectors as sec', 's.sector_id', '=', 'sec.id')
@@ -453,13 +447,13 @@ class StockController extends Controller
             ->where('s.is_active', true)
             ->where('s.market_cap', '>', 0);
 
-            if ($shariahOnly || $mansoorSpecial) {
+            if ($shariahOnly || $investfolioLiquidShariah) {
                 $query->where('s.is_shariah', true);
             }
 
-            if ($mansoorSpecial) {
-                $mansoorService = new MansoorSpecialFilterService();
-                $query->whereRaw($mansoorService->getStocksWhereClause());
+            if ($investfolioLiquidShariah) {
+                $investfolioLiquidShariahService = new InvestfolioLiquidShariahFilterService();
+                $query->whereRaw($investfolioLiquidShariahService->getStocksWhereClause());
             }
 
             $stocks = $query
@@ -532,7 +526,7 @@ class StockController extends Controller
                 'start_date'   => 'sometimes|date_format:Y-m-d',
                 'end_date'     => 'sometimes|date_format:Y-m-d|after_or_equal:start_date',
                 'shariah_only' => 'sometimes|boolean',
-                'mansoor_special' => 'sometimes|boolean',
+                'investfolio_liquid_shariah' => 'sometimes|boolean',
             ]);
 
             if ($validator->fails()) {
@@ -540,14 +534,8 @@ class StockController extends Controller
             }
 
             $shariahOnly = $request->boolean('shariah_only', false);
-            $mansoorSpecial = $request->boolean('mansoor_special', false);
+            $investfolioLiquidShariah = $request->boolean('investfolio_liquid_shariah', false);
 
-            if ($mansoorSpecial) {
-                $mansoorService = new MansoorSpecialFilterService();
-                if (!$mansoorService->isAuthorized($request)) {
-                    return $mansoorService->getAuthorizationError();
-                }
-            }
 
             // Support legacy `date` param and new `start_date`/`end_date` params
             $rawEnd   = $request->get('end_date')   ?? $request->get('date');
@@ -596,10 +584,10 @@ class StockController extends Controller
                 [$resolvedStart, $resolvedEnd]
             )->cnt;
 
-            $mansoorFilter = '';
-            if ($mansoorSpecial) {
-                $mansoorService = new MansoorSpecialFilterService();
-                $mansoorFilter = 'AND ' . $mansoorService->getStockPricesWhereClause();
+            $liquidShariahFilter = '';
+            if ($investfolioLiquidShariah) {
+                $investfolioLiquidShariahService = new InvestfolioLiquidShariahFilterService();
+                $liquidShariahFilter = 'AND ' . $investfolioLiquidShariahService->getStockPricesWhereClause();
             }
 
             $rows = collect(DB::select("
@@ -689,7 +677,7 @@ class StockController extends Controller
                 LEFT  JOIN vol_ma20    vm20 ON vm20.stock_id  = s.id
                 WHERE s.is_active = true
                   AND s.market_cap > 0
-                  {$mansoorFilter}
+                  {$liquidShariahFilter}
                 ORDER BY s.symbol ASC
             ", [
                 'sb_start'    => $resolvedStart,

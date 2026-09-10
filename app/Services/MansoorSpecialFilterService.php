@@ -7,7 +7,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Laravel\Sanctum\PersonalAccessToken;
 
-class MansoorSpecialFilterService
+class InvestfolioLiquidShariahFilterService
 {
     private const ALLOWED_EMAILS = [
         'mansoorsheikh9@gmail.com',
@@ -74,7 +74,7 @@ class MansoorSpecialFilterService
     {
         return response()->json([
             'success' => false,
-            'message' => 'Mansoor Special Criteria filter is not available for this user'
+            'message' => 'Investfolio Liquid Shariah Filter is not available for this user'
         ], 403);
     }
 

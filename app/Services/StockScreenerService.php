@@ -16,18 +16,24 @@ class StockScreenerService
         $this->ratioCalculator = $ratioCalculator;
     }
 
-    public function getScreenerData(string $sectorId): array
+    public function getScreenerData(string $sectorId, bool $investfolioLiquidShariah = false): array
     {
-        $cacheKey = "screener:sector:{$sectorId}";
+        $cacheKeySuffix = $investfolioLiquidShariah ? ':liquid_shariah' : '';
+        $cacheKey = "screener:sector:{$sectorId}{$cacheKeySuffix}";
         $cached = \Illuminate\Support\Facades\Cache::get($cacheKey);
 
         if ($cached) {
-            \Illuminate\Support\Facades\Log::debug('Screener cache hit', ['sector_id' => $sectorId]);
+            \Illuminate\Support\Facades\Log::debug('Screener cache hit', ['sector_id' => $sectorId, 'investfolio_liquid_shariah' => $investfolioLiquidShariah]);
             return $cached;
         }
 
-        $sector = Sector::with(['activeStocks' => function($query) {
+        $sector = Sector::with(['activeStocks' => function($query) use ($investfolioLiquidShariah) {
             $query->orderBy('symbol', 'asc');
+
+            if ($investfolioLiquidShariah) {
+                $investfolioService = new \App\Services\InvestfolioLiquidShariahFilterService();
+                $query->whereRaw($investfolioService->getStocksWhereClause());
+            }
         }])->findOrFail($sectorId);
 
         if ($sector->activeStocks->isEmpty()) {

@@ -3,7 +3,7 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
-use App\Services\MansoorSpecialFilterService;
+use App\Services\InvestfolioLiquidShariahFilterService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -22,7 +22,7 @@ class LatestResultsController extends Controller
         try {
             $validator = Validator::make($request->all(), [
                 'sector_id' => 'nullable|uuid',
-                'mansoor_special' => 'nullable|in:true,false,1,0',
+                'investfolio_liquid_shariah' => 'nullable|in:true,false,1,0',
             ]);
 
             if ($validator->fails()) {
@@ -30,16 +30,9 @@ class LatestResultsController extends Controller
             }
 
             $sectorId = $request->get('sector_id');
-            $mansoorSpecial = filter_var($request->get('mansoor_special', false), FILTER_VALIDATE_BOOLEAN);
+            $investfolioLiquidShariah = filter_var($request->get('investfolio_liquid_shariah', false), FILTER_VALIDATE_BOOLEAN);
 
-            if ($mansoorSpecial) {
-                $mansoorService = new MansoorSpecialFilterService();
-                if (!$mansoorService->isAuthorized($request)) {
-                    return $mansoorService->getAuthorizationError();
-                }
-            }
-
-            $results = $this->fetchLatestResults($sectorId, $mansoorSpecial);
+            $results = $this->fetchLatestResults($sectorId, $investfolioLiquidShariah);
 
             return $this->successResponse([
                 'total_results' => count($results),
@@ -55,10 +48,10 @@ class LatestResultsController extends Controller
      * Fetch latest results data from database
      *
      * @param string|null $sectorId
-     * @param bool $mansoorSpecial
+     * @param bool $investfolioLiquidShariah
      * @return array
      */
-    private function fetchLatestResults($sectorId, $mansoorSpecial): array
+    private function fetchLatestResults($sectorId, $investfolioLiquidShariah = false): array
     {
         $sectorCondition = $sectorId ? 'AND s.sector_id = :sector_id' : '';
 
@@ -68,18 +61,15 @@ class LatestResultsController extends Controller
             $params['sector_id'] = $sectorId;
         }
 
-        // Build mansoor special WHERE clause if needed (applied to final result)
-        $mansoorWhereClause = '';
-        if ($mansoorSpecial) {
-            // Mansoor special: 15-70% free float OR (market cap > 5T AND free float > 70%)
-            $mansoorWhereClause = "WHERE (
-                (es.free_float::numeric >= (es.total_shares_outstanding::numeric * 0.15)
-                 AND es.free_float::numeric <= (es.total_shares_outstanding::numeric * 0.70))
-                OR
-                ((lp.price::numeric * es.total_shares_outstanding::numeric) > 50000000000
-                 AND es.free_float::numeric > (es.total_shares_outstanding::numeric * 0.70))
-            )";
-        }
+        // Investfolio Liquid Shariah filter: conditionally applied
+        // 15-70% free float OR (market cap > 5T AND free float > 70%)
+        $liquidShariahWhereClause = $investfolioLiquidShariah ? "WHERE (
+            (es.free_float::numeric >= (es.total_shares_outstanding::numeric * 0.15)
+             AND es.free_float::numeric <= (es.total_shares_outstanding::numeric * 0.70))
+            OR
+            ((lp.price::numeric * es.total_shares_outstanding::numeric) > 50000000000
+             AND es.free_float::numeric > (es.total_shares_outstanding::numeric * 0.70))
+        )" : "WHERE 1 = 1";
 
         $query = "
         WITH eligible_stocks AS (
@@ -215,7 +205,7 @@ class LatestResultsController extends Controller
         LEFT JOIN prior_year_result pyr ON es.id = pyr.id
         LEFT JOIN ttm_eps_data ted ON es.id = ted.id
         LEFT JOIN ttm_revenue_data trd ON es.id = trd.id
-        $mansoorWhereClause
+        $liquidShariahWhereClause
         ORDER BY es.symbol ASC
         ";
 
