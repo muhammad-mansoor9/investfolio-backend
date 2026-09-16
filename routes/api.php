@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\API\AnalystTargetController;
 use App\Http\Controllers\API\AuthController;
+use App\Http\Controllers\API\BoardMeetingController;
 use App\Http\Controllers\API\BrokerResearchController;
 use App\Http\Controllers\API\CacheUpdateController;
 use App\Http\Controllers\API\DividendHistoryController;
@@ -103,6 +104,12 @@ Route::prefix('dividends')->group(function () {
     Route::get('/upcoming', [DividendHistoryController::class, 'getUpcomingDividends']);
     Route::get('/stock/{stockId}', [DividendHistoryController::class, 'getDividendsByStock']);
     Route::get('/stock/{stockId}/summary', [DividendHistoryController::class, 'getDividendSummaryByStock']);
+});
+
+Route::prefix('board-meetings')->group(function () {
+    Route::get('/', [BoardMeetingController::class, 'index']);
+    Route::get('/stock/{stockId}', [BoardMeetingController::class, 'getByStock']);
+    Route::get('/{id}', [BoardMeetingController::class, 'show']);
 });
 
 Route::prefix('fipi-lipi')->group(function () {
