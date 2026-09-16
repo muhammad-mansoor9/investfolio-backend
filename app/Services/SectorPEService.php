@@ -48,17 +48,7 @@ class SectorPEService
                 fr.eps,
                 ROW_NUMBER() OVER (
                     PARTITION BY fr.stock_id
-                    ORDER BY
-                        make_date(
-                            2000 + CAST(SUBSTRING(fr.quarter FROM '[0-9]+') AS INT),
-                            CASE SUBSTRING(fr.quarter, 1, 3)
-                                WHEN 'Mar' THEN 3
-                                WHEN 'Jun' THEN 6
-                                WHEN 'Sep' THEN 9
-                                WHEN 'Dec' THEN 12
-                            END,
-                            1
-                        ) DESC
+                    ORDER BY fr.announcement_date DESC
                 ) AS rn
             FROM financial_results fr
             WHERE fr.eps IS NOT NULL

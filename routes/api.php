@@ -106,11 +106,7 @@ Route::prefix('dividends')->group(function () {
     Route::get('/stock/{stockId}/summary', [DividendHistoryController::class, 'getDividendSummaryByStock']);
 });
 
-Route::prefix('board-meetings')->group(function () {
-    Route::get('/', [BoardMeetingController::class, 'index']);
-    Route::get('/stock/{stockId}', [BoardMeetingController::class, 'getByStock']);
-    Route::get('/{id}', [BoardMeetingController::class, 'show']);
-});
+Route::get('/board-meetings', [BoardMeetingController::class, 'index']);
 
 Route::prefix('fipi-lipi')->group(function () {
     Route::get('/trading/sector-view', [FIPILIPITradingController::class, 'getSectorView']);

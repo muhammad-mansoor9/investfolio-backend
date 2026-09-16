@@ -125,36 +125,24 @@ class FairValueCalculationController extends Controller
 
         $query = "
         WITH latest_3q AS (
-            -- Get latest 3 quarters sorted by quarter (Mar, Jun, Sep, Dec)
+            -- Get latest 3 quarters sorted by announcement_date (most recent first)
             SELECT
                 fr.stock_id,
                 fr.eps,
                 fr.quarter,
                 fr.announcement_date,
-                ROW_NUMBER() OVER (PARTITION BY fr.stock_id ORDER BY
-                    make_date(
-                        2000 + CAST(SUBSTRING(fr.quarter FROM '[0-9]+') AS INT),
-                        CASE SUBSTRING(fr.quarter, 1, 3)
-                            WHEN 'Mar' THEN 3
-                            WHEN 'Jun' THEN 6
-                            WHEN 'Sep' THEN 9
-                            WHEN 'Dec' THEN 12
-                        END,
-                        1
-                    ) DESC
-                ) as rn
+                ROW_NUMBER() OVER (PARTITION BY fr.stock_id ORDER BY fr.announcement_date DESC) as rn
             FROM financial_results fr
             WHERE fr.eps IS NOT NULL
         ),
         q3_metrics AS (
-            -- Calculate 3Q metrics (Q1, Q2, Q3 = latest 3 quarters)
+            -- Calculate EPS metrics (all available quarters per stock)
             SELECT
                 stock_id,
                 SUM(eps) as eps_3q_sum,
                 ROUND(AVG(eps)::numeric, 2) as eps_avg,
                 MAX(CASE WHEN rn = 1 THEN announcement_date END) as q3_announcement_date
             FROM latest_3q
-            WHERE rn <= 3
             GROUP BY stock_id
         ),
         current_prices AS (
@@ -217,8 +205,8 @@ class FairValueCalculationController extends Controller
             q3_announcement_date
         FROM stock_with_eps
         WHERE current_price IS NOT NULL AND current_price > 0
-            AND eps_3q_sum IS NOT NULL AND eps_3q_sum > 0
-        ORDER BY sector_id, market_cap DESC
+            AND eps_3q_sum IS NOT NULL
+        ORDER BY q3_announcement_date DESC, symbol ASC
         ";
 
         Log::info('[FVC::getStocksWithFairValue] Executing database query');
@@ -251,85 +239,115 @@ class FairValueCalculationController extends Controller
                 continue;
             }
 
-            $sector_pe = $sectorAveragePE[$row->sector_id]['sector_pe'] ?? null;
-            if ($sector_pe === null || $sector_pe <= 0) {
-                Log::debug('[FVC::getStocksWithFairValue] Skipped: No sector PE', [
-                    'symbol' => $row->symbol,
-                    'sector_id' => $row->sector_id,
-                ]);
-                $skipped_count++;
-                continue;
+            $has_positive_eps = $row->eps_3q_sum !== null && $row->eps_3q_sum > 0;
+            $sector_pe = null;
+
+            // Only calculate sector PE if stock has positive EPS
+            if ($has_positive_eps) {
+                $sector_pe = $sectorAveragePE[$row->sector_id]['sector_pe'] ?? null;
+
+                // If sector PE is unavailable, calculate market-wide PE as fallback
+                if ($sector_pe === null || $sector_pe <= 0) {
+                    $market_pe = 0;
+                    $market_count = 0;
+                    foreach ($sectorAveragePE as $metrics) {
+                        if ($metrics['sector_pe'] > 0) {
+                            $market_pe += $metrics['sector_pe'];
+                            $market_count++;
+                        }
+                    }
+                    $sector_pe = $market_count > 0 ? round($market_pe / $market_count, 2) : null;
+
+                    if ($sector_pe === null || $sector_pe <= 0) {
+                        Log::debug('[FVC::getStocksWithFairValue] No sector or market PE available', [
+                            'symbol' => $row->symbol,
+                            'sector_id' => $row->sector_id,
+                        ]);
+                        $sector_pe = null;
+                    } else {
+                        Log::debug('[FVC::getStocksWithFairValue] Using market PE fallback', [
+                            'symbol' => $row->symbol,
+                            'market_pe' => $sector_pe,
+                        ]);
+                    }
+                }
             }
 
             $current_price = (float) $row->current_price;
-            $eps_3q_sum = (float) $row->eps_3q_sum;
-            $eps_avg = (float) $row->eps_avg;
+            $eps_3q_sum = $row->eps_3q_sum !== null ? (float) $row->eps_3q_sum : null;
+            $eps_avg = $row->eps_avg !== null ? (float) $row->eps_avg : null;
             $price_at_q3 = $row->price_at_q3_announcement ? (float) $row->price_at_q3_announcement : null;
 
-            // 3Q PE = Price at Q3 announcement / Sum of last 3Q EPS
+            // Initialize metrics as null (for negative/missing EPS)
             $latest_3q_pe = null;
-            if ($price_at_q3 !== null && $price_at_q3 > 0 && $eps_3q_sum > 0) {
-                $latest_3q_pe = round($price_at_q3 / $eps_3q_sum, 2);
-                Log::debug('[FVC::calc] 3Q PE calculated', [
-                    'symbol' => $row->symbol,
-                    'price_at_q3' => $price_at_q3,
-                    'eps_3q_sum' => $eps_3q_sum,
-                    'latest_3q_pe' => $latest_3q_pe,
-                ]);
-            } else {
-                Log::debug('[FVC::calc] 3Q PE skipped', [
-                    'symbol' => $row->symbol,
-                    'price_at_q3' => $price_at_q3,
-                    'eps_3q_sum' => $eps_3q_sum,
-                ]);
-            }
-
-            // Expected Annual EPS = Average of 3Q × 4
-            $expected_annual_eps = round($eps_avg * 4, 2);
-            Log::debug('[FVC::calc] Expected annual EPS', [
-                'symbol' => $row->symbol,
-                'eps_avg' => $eps_avg,
-                'expected_annual_eps' => $expected_annual_eps,
-            ]);
-
-            // Expected PE = Current Price / Expected Annual EPS
+            $expected_annual_eps = null;
             $expected_pe = null;
-            if ($expected_annual_eps > 0 && $current_price > 0) {
-                $expected_pe = round($current_price / $expected_annual_eps, 2);
-                Log::debug('[FVC::calc] Expected PE calculated', [
-                    'symbol' => $row->symbol,
-                    'current_price' => $current_price,
-                    'expected_annual_eps' => $expected_annual_eps,
-                    'expected_pe' => $expected_pe,
-                ]);
-            }
-
-            // Fair Value = Sector PE × Expected Annual EPS
             $fair_value = null;
-            if ($sector_pe > 0 && $expected_annual_eps > 0) {
-                $fair_value = round($sector_pe * $expected_annual_eps, 2);
-                Log::debug('[FVC::calc] Fair value calculated', [
-                    'symbol' => $row->symbol,
-                    'sector_pe' => $sector_pe,
-                    'expected_annual_eps' => $expected_annual_eps,
-                    'fair_value' => $fair_value,
-                ]);
-            }
-
-            // Growth Potential = (Fair Value - CMP) / CMP × 100
             $growth_potential = null;
-            if ($fair_value !== null && $fair_value > 0 && $current_price > 0) {
-                $growth_potential = round((($fair_value - $current_price) / $current_price) * 100, 2);
-                Log::debug('[FVC::calc] Growth potential calculated', [
+            $expected_quarterly_eps = null;
+
+            // Only calculate metrics if stock has positive EPS
+            if ($has_positive_eps) {
+                // 3Q PE = Price at Q3 announcement / Sum of last 3Q EPS
+                if ($price_at_q3 !== null && $price_at_q3 > 0) {
+                    $latest_3q_pe = round($price_at_q3 / $eps_3q_sum, 2);
+                    Log::debug('[FVC::calc] 3Q PE calculated', [
+                        'symbol' => $row->symbol,
+                        'price_at_q3' => $price_at_q3,
+                        'eps_3q_sum' => $eps_3q_sum,
+                        'latest_3q_pe' => $latest_3q_pe,
+                    ]);
+                }
+
+                // Expected Annual EPS = Average of 3Q × 4
+                $expected_annual_eps = round($eps_avg * 4, 2);
+                Log::debug('[FVC::calc] Expected annual EPS', [
                     'symbol' => $row->symbol,
-                    'fair_value' => $fair_value,
-                    'current_price' => $current_price,
-                    'growth_potential' => $growth_potential,
+                    'eps_avg' => $eps_avg,
+                    'expected_annual_eps' => $expected_annual_eps,
+                ]);
+
+                // Expected PE = Current Price / Expected Annual EPS
+                if ($expected_annual_eps > 0 && $current_price > 0) {
+                    $expected_pe = round($current_price / $expected_annual_eps, 2);
+                    Log::debug('[FVC::calc] Expected PE calculated', [
+                        'symbol' => $row->symbol,
+                        'current_price' => $current_price,
+                        'expected_annual_eps' => $expected_annual_eps,
+                        'expected_pe' => $expected_pe,
+                    ]);
+                }
+
+                // Fair Value = Sector PE × Expected Annual EPS
+                if ($sector_pe !== null && $sector_pe > 0 && $expected_annual_eps > 0) {
+                    $fair_value = round($sector_pe * $expected_annual_eps, 2);
+                    Log::debug('[FVC::calc] Fair value calculated', [
+                        'symbol' => $row->symbol,
+                        'sector_pe' => $sector_pe,
+                        'expected_annual_eps' => $expected_annual_eps,
+                        'fair_value' => $fair_value,
+                    ]);
+                }
+
+                // Growth Potential = (Fair Value - CMP) / CMP × 100
+                if ($fair_value !== null && $fair_value > 0 && $current_price > 0) {
+                    $growth_potential = round((($fair_value - $current_price) / $current_price) * 100, 2);
+                    Log::debug('[FVC::calc] Growth potential calculated', [
+                        'symbol' => $row->symbol,
+                        'fair_value' => $fair_value,
+                        'current_price' => $current_price,
+                        'growth_potential' => $growth_potential,
+                    ]);
+                }
+
+                // Calculate additional fields for frontend
+                $expected_quarterly_eps = $expected_annual_eps > 0 ? round($expected_annual_eps / 4, 2) : null;
+            } else {
+                Log::debug('[FVC::calc] Skipped metrics for negative/missing EPS', [
+                    'symbol' => $row->symbol,
+                    'eps_3q_sum' => $eps_3q_sum,
                 ]);
             }
-
-            // Calculate additional fields for frontend
-            $expected_quarterly_eps = $expected_annual_eps > 0 ? round($expected_annual_eps / 4, 2) : null;
 
             $processedResults[] = [
                 'stock_id' => (string) $row->stock_id,
