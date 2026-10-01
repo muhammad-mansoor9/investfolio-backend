@@ -6,7 +6,7 @@ use App\Http\Controllers\API\BoardMeetingController;
 use App\Http\Controllers\API\BrokerResearchController;
 use App\Http\Controllers\API\CacheUpdateController;
 use App\Http\Controllers\API\DividendHistoryController;
-use App\Http\Controllers\API\FairValueCalculationController;
+use App\Http\Controllers\API\ExpectedEarningsController;
 use App\Http\Controllers\API\FinancialController;
 use App\Http\Controllers\API\FinancialRatioController;
 use App\Http\Controllers\API\FIPILIPIMarketController;
@@ -154,7 +154,7 @@ Route::prefix('sector-volume-history')->group(function () {
     Route::get('/data', [SectorVolumeHistoryController::class, 'getSectorVolumeAnalysis']);
 });
 
-Route::get('/fair-value-calculation', [FairValueCalculationController::class, 'getFairValueCalculation']);
+Route::get('/expected-earnings', [ExpectedEarningsController::class, 'getExpectedEarnings']);
 Route::get('/stock-retracement', [StockRetracementController::class, 'getStockRetracement']);
 Route::post('/technical-analysis/data', [TechnicalAnalysisController::class, 'getData']);
 Route::get('/recent-earnings', [RecentEarningsController::class, 'getRecentEarnings']);

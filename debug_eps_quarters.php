@@ -35,7 +35,7 @@ for ($i = 1; $i <= $maxQ; $i++) {
 }
 echo "\nStocks with < 3 quarters (EXCLUDED): " . $excluded . "\n";
 echo "Stocks with >= 3 quarters (ELIGIBLE): " . (array_sum($countByQuarters) - $excluded) . "\n";
-echo "\nExpected fair value results: " . (array_sum($countByQuarters) - $excluded) . "\n";
-echo "Actual fair value results: 340\n";
+echo "\nExpected expected earnings results: " . (array_sum($countByQuarters) - $excluded) . "\n";
+echo "Actual expected earnings results: 340\n";
 echo "Gap: " . ((array_sum($countByQuarters) - $excluded) - 340) . " (other filters)\n";
 ?>

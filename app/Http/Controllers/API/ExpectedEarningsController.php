@@ -11,18 +11,18 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Log;
 
-class FairValueCalculationController extends Controller
+class ExpectedEarningsController extends Controller
 {
     /**
-     * Get fair value calculation for stocks based on sector P/E
+     * Get expected earnings calculation for stocks based on sector P/E
      *
      * @param Request $request
      * @return JsonResponse
      */
-    public function getFairValueCalculation(Request $request): JsonResponse
+    public function getExpectedEarnings(Request $request): JsonResponse
     {
         try {
-            Log::info('[FVC] Fair value calculation started', [
+            Log::info('[EE] Expected earnings calculation started', [
                 'request_params' => $request->all(),
                 'user_id' => auth()->id(),
             ]);
@@ -33,7 +33,7 @@ class FairValueCalculationController extends Controller
             ]);
 
             if ($validator->fails()) {
-                Log::warning('[FVC] Validation failed', ['errors' => $validator->errors()]);
+                Log::warning('[EE] Validation failed', ['errors' => $validator->errors()]);
                 return response()->json([
                     'success' => false,
                     'message' => 'Validation failed',
@@ -44,15 +44,15 @@ class FairValueCalculationController extends Controller
             $calculationDate = $request->get('date', now()->toDateString());
             $investfolioLiquidShariah = $request->boolean('investfolio_liquid_shariah', false);
 
-            Log::info('[FVC] Calculation parameters set', [
+            Log::info('[EE] Calculation parameters set', [
                 'date' => $calculationDate,
                 'investfolio_liquid_shariah' => $investfolioLiquidShariah,
             ]);
 
             // Get sector PE metrics using weighted formula from service
-            Log::info('[FVC] Fetching sector PE metrics from SectorPEService');
+            Log::info('[EE] Fetching sector PE metrics from SectorPEService');
             $sectorPEMetrics = SectorPEService::calculateAll($calculationDate);
-            Log::info('[FVC] Sector PE metrics fetched', [
+            Log::info('[EE] Sector PE metrics fetched', [
                 'sectors_count' => count($sectorPEMetrics),
                 'sample_sectors' => array_slice($sectorPEMetrics, 0, 3),
             ]);
@@ -62,14 +62,14 @@ class FairValueCalculationController extends Controller
             })->toArray();
 
             // Get stock data with filters applied only to display
-            Log::info('[FVC] Fetching stocks with fair value calculations');
-            $stocksData = $this->getStocksWithFairValue(
+            Log::info('[EE] Fetching stocks with expected earnings calculations');
+            $stocksData = $this->getStocksWithExpectedEarnings(
                 $calculationDate,
                 $sectorPE,
                 $investfolioLiquidShariah
             );
 
-            Log::info('[FVC] Fair value calculation completed successfully', [
+            Log::info('[EE] Expected earnings calculation completed successfully', [
                 'total_results' => count($stocksData),
                 'sample_data' => array_slice($stocksData, 0, 2),
             ]);
@@ -80,11 +80,11 @@ class FairValueCalculationController extends Controller
                     'total_results' => count($stocksData),
                     'data' => $stocksData,
                 ],
-                'message' => 'Fair value calculation completed',
+                'message' => 'Expected earnings calculation completed',
             ], 200);
 
         } catch (\Exception $e) {
-            Log::error('[FVC] Fair value calculation error', [
+            Log::error('[EE] Expected earnings calculation error', [
                 'exception' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
                 'user_id' => auth()->id(),
@@ -92,18 +92,18 @@ class FairValueCalculationController extends Controller
 
             return response()->json([
                 'success' => false,
-                'message' => 'Failed to calculate fair values. Please try again.',
+                'message' => 'Failed to calculate expected earnings. Please try again.',
                 'error_detail' => $e->getMessage(),
             ], 500);
         }
     }
 
 /**
-     * Get stocks with fair value calculations including:
+     * Get stocks with expected earnings calculations including:
      * - EPS Growth QOQ and YoY
      * - Latest 3Q EPS and 4Q Expected EPS
      * - Latest 3Q PE and 4Q Expected PE
-     * - Fair Value based on Sector PE
+     * - Expected Earnings based on Sector PE
      * - Growth Potential
      *
      * @param string $calculationDate
@@ -111,13 +111,13 @@ class FairValueCalculationController extends Controller
      * @param bool $investfolioLiquidShariah
      * @return array
      */
-    private function getStocksWithFairValue(
+    private function getStocksWithExpectedEarnings(
         $calculationDate,
         $sectorAveragePE,
         $investfolioLiquidShariah
     ): array {
 
-        Log::info('[FVC::getStocksWithFairValue] Starting stock data fetch', [
+        Log::info('[EE::getStocksWithExpectedEarnings] Starting stock data fetch', [
             'calculation_date' => $calculationDate,
             'sector_count' => count($sectorAveragePE),
             'investfolio_liquid_shariah' => $investfolioLiquidShariah,
@@ -209,9 +209,9 @@ class FairValueCalculationController extends Controller
         ORDER BY q3_announcement_date DESC, symbol ASC
         ";
 
-        Log::info('[FVC::getStocksWithFairValue] Executing database query');
+        Log::info('[EE::getStocksWithExpectedEarnings] Executing database query');
         $results = DB::select($query, ['calc_date' => $calculationDate]);
-        Log::info('[FVC::getStocksWithFairValue] Query executed', [
+        Log::info('[EE::getStocksWithExpectedEarnings] Query executed', [
             'results_count' => count($results),
             'sample_row' => isset($results[0]) ? (array) $results[0] : null,
         ]);
@@ -222,7 +222,7 @@ class FairValueCalculationController extends Controller
         $filterService = $investfolioLiquidShariah ? new InvestfolioLiquidShariahFilterService() : null;
 
         foreach ($results as $row) {
-            Log::debug('[FVC::getStocksWithFairValue] Processing stock', [
+            Log::debug('[EE::getStocksWithExpectedEarnings] Processing stock', [
                 'symbol' => $row->symbol,
                 'sector_id' => $row->sector_id,
                 'current_price' => $row->current_price,
@@ -232,7 +232,7 @@ class FairValueCalculationController extends Controller
             ]);
 
             if ($investfolioLiquidShariah && !$filterService->passesFilter($row)) {
-                Log::debug('[FVC::getStocksWithFairValue] Skipped: Investfolio Liquid Shariah filter not met', [
+                Log::debug('[EE::getStocksWithExpectedEarnings] Skipped: Investfolio Liquid Shariah filter not met', [
                     'symbol' => $row->symbol,
                 ]);
                 $skipped_count++;
@@ -259,13 +259,13 @@ class FairValueCalculationController extends Controller
                     $sector_pe = $market_count > 0 ? round($market_pe / $market_count, 2) : null;
 
                     if ($sector_pe === null || $sector_pe <= 0) {
-                        Log::debug('[FVC::getStocksWithFairValue] No sector or market PE available', [
+                        Log::debug('[EE::getStocksWithExpectedEarnings] No sector or market PE available', [
                             'symbol' => $row->symbol,
                             'sector_id' => $row->sector_id,
                         ]);
                         $sector_pe = null;
                     } else {
-                        Log::debug('[FVC::getStocksWithFairValue] Using market PE fallback', [
+                        Log::debug('[EE::getStocksWithExpectedEarnings] Using market PE fallback', [
                             'symbol' => $row->symbol,
                             'market_pe' => $sector_pe,
                         ]);
@@ -282,7 +282,7 @@ class FairValueCalculationController extends Controller
             $latest_3q_pe = null;
             $expected_annual_eps = null;
             $expected_pe = null;
-            $fair_value = null;
+            $expected_earnings = null;
             $growth_potential = null;
             $expected_quarterly_eps = null;
 
@@ -291,7 +291,7 @@ class FairValueCalculationController extends Controller
                 // 3Q PE = Price at Q3 announcement / Sum of last 3Q EPS
                 if ($price_at_q3 !== null && $price_at_q3 > 0) {
                     $latest_3q_pe = round($price_at_q3 / $eps_3q_sum, 2);
-                    Log::debug('[FVC::calc] 3Q PE calculated', [
+                    Log::debug('[EE::calc] 3Q PE calculated', [
                         'symbol' => $row->symbol,
                         'price_at_q3' => $price_at_q3,
                         'eps_3q_sum' => $eps_3q_sum,
@@ -301,7 +301,7 @@ class FairValueCalculationController extends Controller
 
                 // Expected Annual EPS = Average of 3Q × 4
                 $expected_annual_eps = round($eps_avg * 4, 2);
-                Log::debug('[FVC::calc] Expected annual EPS', [
+                Log::debug('[EE::calc] Expected annual EPS', [
                     'symbol' => $row->symbol,
                     'eps_avg' => $eps_avg,
                     'expected_annual_eps' => $expected_annual_eps,
@@ -310,7 +310,7 @@ class FairValueCalculationController extends Controller
                 // Expected PE = Current Price / Expected Annual EPS
                 if ($expected_annual_eps > 0 && $current_price > 0) {
                     $expected_pe = round($current_price / $expected_annual_eps, 2);
-                    Log::debug('[FVC::calc] Expected PE calculated', [
+                    Log::debug('[EE::calc] Expected PE calculated', [
                         'symbol' => $row->symbol,
                         'current_price' => $current_price,
                         'expected_annual_eps' => $expected_annual_eps,
@@ -318,23 +318,23 @@ class FairValueCalculationController extends Controller
                     ]);
                 }
 
-                // Fair Value = Sector PE × Expected Annual EPS
+                // Expected Earnings = Sector PE × Expected Annual EPS
                 if ($sector_pe !== null && $sector_pe > 0 && $expected_annual_eps > 0) {
-                    $fair_value = round($sector_pe * $expected_annual_eps, 2);
-                    Log::debug('[FVC::calc] Fair value calculated', [
+                    $expected_earnings = round($sector_pe * $expected_annual_eps, 2);
+                    Log::debug('[EE::calc] Expected earnings calculated', [
                         'symbol' => $row->symbol,
                         'sector_pe' => $sector_pe,
                         'expected_annual_eps' => $expected_annual_eps,
-                        'fair_value' => $fair_value,
+                        'expected_earnings' => $expected_earnings,
                     ]);
                 }
 
-                // Growth Potential = (Fair Value - CMP) / CMP × 100
-                if ($fair_value !== null && $fair_value > 0 && $current_price > 0) {
-                    $growth_potential = round((($fair_value - $current_price) / $current_price) * 100, 2);
-                    Log::debug('[FVC::calc] Growth potential calculated', [
+                // Growth Potential = (Expected Earnings - CMP) / CMP × 100
+                if ($expected_earnings !== null && $expected_earnings > 0 && $current_price > 0) {
+                    $growth_potential = round((($expected_earnings - $current_price) / $current_price) * 100, 2);
+                    Log::debug('[EE::calc] Growth potential calculated', [
                         'symbol' => $row->symbol,
-                        'fair_value' => $fair_value,
+                        'expected_earnings' => $expected_earnings,
                         'current_price' => $current_price,
                         'growth_potential' => $growth_potential,
                     ]);
@@ -343,7 +343,7 @@ class FairValueCalculationController extends Controller
                 // Calculate additional fields for frontend
                 $expected_quarterly_eps = $expected_annual_eps > 0 ? round($expected_annual_eps / 4, 2) : null;
             } else {
-                Log::debug('[FVC::calc] Skipped metrics for negative/missing EPS', [
+                Log::debug('[EE::calc] Skipped metrics for negative/missing EPS', [
                     'symbol' => $row->symbol,
                     'eps_3q_sum' => $eps_3q_sum,
                 ]);
@@ -363,13 +363,13 @@ class FairValueCalculationController extends Controller
                 'expected_annual_eps' => $expected_annual_eps,
                 'latest_3q_pe' => $latest_3q_pe,
                 'annual_expected_pe' => $expected_pe,
-                'fair_value' => $fair_value,
+                'expected_earnings' => $expected_earnings,
                 'growth_potential' => $growth_potential,
                 'latest_result_date' => $row->q3_announcement_date ? (string) $row->q3_announcement_date : null,
             ];
         }
 
-        Log::info('[FVC::getStocksWithFairValue] Processing complete', [
+        Log::info('[EE::getStocksWithExpectedEarnings] Processing complete', [
             'total_rows' => count($results),
             'processed' => count($processedResults),
             'skipped' => $skipped_count,
