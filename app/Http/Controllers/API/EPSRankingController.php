@@ -3,15 +3,15 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
+use App\Services\InvestfolioLiquidShariahFilterService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Validator;
 
 class EPSRankingController extends Controller
 {
     /**
-     * Get EPS ranking analysis
+     * Get EPS ranking analysis from financial_results
      *
      * @param Request $request
      * @return JsonResponse
@@ -19,129 +19,98 @@ class EPSRankingController extends Controller
     public function getEPSRanking(Request $request): JsonResponse
     {
         try {
-            $validator = Validator::make($request->all(), [
-                'min_float' => 'nullable|numeric|min:0',
-                'max_float' => 'nullable|numeric|min:0',
-            ]);
-
-            if ($validator->fails()) {
-                return $this->validationErrorResponse($validator->errors());
-            }
-
-            $minFloat = $request->get('min_float', 10);
-            $maxFloat = $request->get('max_float', 100);
-
-            // Validate min < max
-            if ($minFloat >= $maxFloat) {
-                return $this->validationErrorResponse(['min_float' => 'Min float must be less than max float']);
-            }
+            $investfolioLiquidShariah = $request->boolean('investfolio_liquid_shariah', false);
 
             $query = "
-            WITH eligible_stocks AS (
+            WITH latest_four AS (
                 SELECT
-                    s.id,
-                    s.symbol,
-                    s.description
-                FROM stocks s
+                    fr.stock_id,
+                    fr.announcement_date,
+                    fr.eps,
+                    ROW_NUMBER() OVER (PARTITION BY fr.stock_id ORDER BY fr.announcement_date DESC) as rn
+                FROM financial_results fr
+                INNER JOIN stocks s ON fr.stock_id = s.id
                 WHERE s.is_active = true
-                  AND s.market_cap > 0
-                  AND s.total_shares_outstanding > 0
-                  AND s.free_float > 0
-                  AND ((s.free_float::numeric / s.total_shares_outstanding::numeric) * 100)
-                      BETWEEN :min_free_float AND :max_free_float
+                  AND fr.eps IS NOT NULL
             ),
-            all_periods AS (
-                SELECT DISTINCT
-                    header,
-                    TO_DATE(header, 'Mon YY') as header_date
-                FROM financial_data
-                WHERE type = 'QUARTERLY'
-                  AND statement = 'Ratios'
-                  AND identifier = 'EPS'
-                  AND header IS NOT NULL
-                ORDER BY TO_DATE(header, 'Mon YY') DESC
-                LIMIT 5
-            ),
-            eps_data AS (
+            aggregated AS (
                 SELECT
-                    fd.symbol,
-                    fd.header,
-                    TO_DATE(fd.header, 'Mon YY') as header_date,
-                    fd.value::numeric as eps_value,
-                    ROW_NUMBER() OVER (PARTITION BY fd.symbol ORDER BY TO_DATE(fd.header, 'Mon YY') DESC) as period_rank
-                FROM financial_data fd
-                INNER JOIN eligible_stocks es ON fd.symbol = es.symbol
-                WHERE fd.type = 'QUARTERLY'
-                  AND fd.statement = 'Ratios'
-                  AND fd.identifier = 'EPS'
-                  AND fd.header IN (SELECT header FROM all_periods)
-                  AND fd.value IS NOT NULL
-                  AND fd.value ~ '^-?[0-9]+\.?[0-9]*$'
-            ),
-            latest_eps AS (
-                SELECT symbol, header as latest_period, eps_value as latest_eps
-                FROM eps_data
-                WHERE period_rank = 1
-            ),
-            sply_eps AS (
-                SELECT symbol, header as sply_period, eps_value as sply_eps
-                FROM eps_data
-                WHERE period_rank = 5
+                    stock_id,
+                    MAX(CASE WHEN rn = 1 THEN announcement_date END) as latest_result_date,
+                    MAX(CASE WHEN rn = 1 THEN eps END) as current_eps,
+                    SUM(CASE WHEN rn BETWEEN 1 AND 4 THEN eps ELSE 0 END) as ttm_eps,
+                    MAX(CASE WHEN rn = 2 THEN eps END) as prev_eps,
+                    MAX(CASE WHEN rn = 5 THEN eps END) as yoy_eps,
+                    SUM(CASE WHEN rn BETWEEN 5 AND 8 THEN eps ELSE 0 END) as ttm_prev_eps
+                FROM latest_four
+                WHERE rn <= 8
+                GROUP BY stock_id
             )
             SELECT
-                es.symbol,
-                es.description,
-                le.latest_period,
-                ROUND(le.latest_eps::numeric, 2) as latest_eps,
-                se.sply_period,
-                ROUND(se.sply_eps::numeric, 2) as sply_eps,
-                ROUND((le.latest_eps - se.sply_eps)::numeric, 2) as eps_change,
+                s.id as stock_id,
+                s.symbol,
+                s.description,
+                a.latest_result_date,
+                ROUND(a.current_eps::numeric, 4) as current_eps,
+                ROUND(a.ttm_eps::numeric, 4) as ttm_eps,
                 CASE
-                    WHEN se.sply_eps != 0 THEN
-                        ROUND((((le.latest_eps - se.sply_eps) / ABS(se.sply_eps)) * 100)::numeric, 2)
+                    WHEN a.prev_eps IS NOT NULL AND a.prev_eps > 0 THEN
+                        ROUND(((a.current_eps - a.prev_eps) / a.prev_eps * 100)::numeric, 2)
                     ELSE NULL
-                END as eps_change_percent
-            FROM eligible_stocks es
-            INNER JOIN latest_eps le ON es.symbol = le.symbol
-            INNER JOIN sply_eps se ON es.symbol = se.symbol
-            WHERE le.latest_eps IS NOT NULL
-              AND se.sply_eps IS NOT NULL
-            ORDER BY eps_change_percent DESC NULLS LAST
+                END as change_qoq_percent,
+                CASE
+                    WHEN a.yoy_eps IS NOT NULL AND a.yoy_eps > 0 THEN
+                        ROUND(((a.current_eps - a.yoy_eps) / a.yoy_eps * 100)::numeric, 2)
+                    ELSE NULL
+                END as change_yoy_percent,
+                CASE
+                    WHEN a.ttm_prev_eps IS NOT NULL AND a.ttm_prev_eps > 0 THEN
+                        ROUND(((a.ttm_eps - a.ttm_prev_eps) / a.ttm_prev_eps * 100)::numeric, 2)
+                    ELSE NULL
+                END as change_ttm_over_ttm_percent,
+                s.is_shariah
+            FROM aggregated a
+            INNER JOIN stocks s ON a.stock_id = s.id
+            ORDER BY s.symbol ASC
             ";
 
-            try {
-                $results = DB::select($query, [
-                    'min_free_float' => $minFloat,
-                    'max_free_float' => $maxFloat,
-                ]);
+            $results = DB::select($query);
 
-                $data = collect($results)->map(function ($row) {
+            $filterService = $investfolioLiquidShariah ? new InvestfolioLiquidShariahFilterService() : null;
+
+            $data = collect($results)
+                ->filter(function ($row) use ($investfolioLiquidShariah, $filterService) {
+                    if ($investfolioLiquidShariah && !$filterService->passesFilter($row)) {
+                        return false;
+                    }
+                    return true;
+                })
+                ->map(function ($row) {
                     return [
+                        'stock_id' => $row->stock_id,
                         'symbol' => $row->symbol,
                         'description' => $row->description,
-                        'latest_period' => $row->latest_period,
-                        'latest_eps' => $row->latest_eps ? (float) $row->latest_eps : null,
-                        'sply_eps' => $row->sply_eps ? (float) $row->sply_eps : null,
-                        'eps_change' => $row->eps_change ? (float) $row->eps_change : null,
-                        'eps_change_percent' => $row->eps_change_percent ? (float) $row->eps_change_percent : null,
+                        'latest_result_date' => $row->latest_result_date,
+                        'current_eps' => $row->current_eps ? (float) $row->current_eps : null,
+                        'ttm_eps' => $row->ttm_eps ? (float) $row->ttm_eps : null,
+                        'change_qoq_percent' => $row->change_qoq_percent ? (float) $row->change_qoq_percent : null,
+                        'change_yoy_percent' => $row->change_yoy_percent ? (float) $row->change_yoy_percent : null,
+                        'change_ttm_over_ttm_percent' => $row->change_ttm_over_ttm_percent ? (float) $row->change_ttm_over_ttm_percent : null,
+                        'is_shariah' => (bool) $row->is_shariah,
                     ];
                 });
 
-                $summary = [
-                    'total_stocks' => $data->count(),
-                    'avg_change_percent' => $data->avg('eps_change_percent') ?: 0,
-                    'max_change_percent' => $data->max('eps_change_percent') ?: 0,
-                    'min_change_percent' => $data->min('eps_change_percent') ?: 0,
-                ];
+            $summary = [
+                'total_stocks' => $data->count(),
+                'avg_qoq_change' => $data->avg('change_qoq_percent') ?: 0,
+                'avg_yoy_change' => $data->avg('change_yoy_percent') ?: 0,
+                'avg_ttm_change' => $data->avg('change_ttm_over_ttm_percent') ?: 0,
+            ];
 
-                return $this->successResponse([
-                    'summary' => $summary,
-                    'data' => $data,
-                ], 'EPS ranking data retrieved successfully');
-
-            } catch (\Exception $e) {
-                return $this->serverErrorResponse('Failed to retrieve EPS ranking data', $e);
-            }
+            return $this->successResponse([
+                'summary' => $summary,
+                'data' => $data,
+            ], 'EPS ranking data retrieved successfully');
 
         } catch (\Exception $e) {
             return $this->serverErrorResponse('An error occurred while retrieving EPS ranking', $e);

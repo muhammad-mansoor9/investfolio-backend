@@ -29,7 +29,7 @@ class FairValueCalculationController extends Controller
 
             $validator = Validator::make($request->all(), [
                 'date' => 'nullable|date_format:Y-m-d',
-                'investfolio_liquid_shariah' => 'sometimes|boolean',
+                'investfolio_liquid_shariah' => 'sometimes|in:0,1,true,false',
             ]);
 
             if ($validator->fails()) {

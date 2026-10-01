@@ -404,9 +404,9 @@ class StockController extends Controller
     {
         try {
             $validator = Validator::make($request->all(), [
-                'shariah_only' => 'sometimes|boolean',
+                'shariah_only' => 'sometimes|in:0,1,true,false',
                 'index_id' => 'sometimes|uuid',
-                'investfolio_liquid_shariah' => 'sometimes|boolean'
+                'investfolio_liquid_shariah' => 'sometimes|in:0,1,true,false'
             ]);
 
             if ($validator->fails()) {
@@ -525,8 +525,8 @@ class StockController extends Controller
                 'date'         => 'sometimes|date_format:Y-m-d',
                 'start_date'   => 'sometimes|date_format:Y-m-d',
                 'end_date'     => 'sometimes|date_format:Y-m-d|after_or_equal:start_date',
-                'shariah_only' => 'sometimes|boolean',
-                'investfolio_liquid_shariah' => 'sometimes|boolean',
+                'shariah_only' => 'sometimes|in:0,1,true,false',
+                'investfolio_liquid_shariah' => 'sometimes|in:0,1,true,false',
             ]);
 
             if ($validator->fails()) {

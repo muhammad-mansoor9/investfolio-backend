@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
+use App\Services\InvestfolioLiquidShariahFilterService;
 use App\Services\StockIndicatorService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -32,10 +33,11 @@ class TechnicalAnalysisController extends Controller
     {
         try {
             $validator = Validator::make($request->all(), [
-                'date'                 => 'required|date_format:Y-m-d',
-                'filters'              => 'nullable|array|max:20',
-                'filters.*.indicator'  => 'required|in:price_vs_ema,ema_crossover,rsi_value,rsi_crossover,macd_line_vs_signal,macd_histogram,klinger_value,klinger_crossover',
-                'filters.*.timeframe'  => 'required|in:1D,1W,1M',
+                'date'                         => 'required|date_format:Y-m-d',
+                'filters'                      => 'nullable|array|max:20',
+                'filters.*.indicator'          => 'required|in:price_vs_ema,ema_crossover,rsi_value,rsi_crossover,macd_line_vs_signal,macd_histogram,klinger_value,klinger_crossover',
+                'filters.*.timeframe'          => 'required|in:1D,1W,1M',
+                'investfolio_liquid_shariah'   => 'sometimes|in:0,1,true,false',
             ]);
 
             if ($validator->fails()) {
@@ -44,8 +46,9 @@ class TechnicalAnalysisController extends Controller
 
             $date    = $request->input('date');
             $filters = $request->input('filters', []);
+            $investfolioLiquidShariah = $request->boolean('investfolio_liquid_shariah', false);
 
-            $built = $this->buildQuery($date, $filters);
+            $built = $this->buildQuery($date, $filters, $investfolioLiquidShariah);
             $rows  = DB::select($built['sql'], $built['bindings']);
             $data  = collect($rows)->map(fn($row) => $this->mapRow($row));
 
@@ -128,7 +131,7 @@ class TechnicalAnalysisController extends Controller
         ];
     }
 
-    private function buildQuery(string $date, array $filters): array
+    private function buildQuery(string $date, array $filters, bool $investfolioLiquidShariah = false): array
     {
         // Use distinct binding names so the same date value can be referenced multiple
         // times without hitting PDO's per-driver deduplication behaviour.
@@ -222,6 +225,12 @@ WITH base_data AS (
 )";
 
         $conditions = $this->buildFilterConditions($filters, $bindings);
+
+        if ($investfolioLiquidShariah) {
+            $investfolioService = new InvestfolioLiquidShariahFilterService();
+            $conditions[] = $investfolioService->getStocksWhereClause();
+        }
+
         $whereSql   = empty($conditions) ? '' : "\nWHERE " . implode("\n  AND ", $conditions);
         $sql        = $baseCte . "\nSELECT * FROM base_data bd" . $whereSql . "\nORDER BY bd.symbol";
 

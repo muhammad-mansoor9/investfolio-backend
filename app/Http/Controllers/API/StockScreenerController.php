@@ -35,7 +35,7 @@ class StockScreenerController extends Controller
         try {
             $validated = $request->validate([
                 'sector_id' => 'required|uuid|exists:sectors,id',
-                'investfolio_liquid_shariah' => 'sometimes|boolean'
+                'investfolio_liquid_shariah' => 'sometimes|in:0,1,true,false'
             ]);
 
             $sectorId = $validated['sector_id'];
