@@ -35,6 +35,8 @@ use App\Http\Controllers\API\VolumeAnalysisController;
 use App\Http\Controllers\API\VolumeController;
 use App\Http\Controllers\API\VolumeHistoryController;
 use App\Http\Controllers\API\MarketIntelligenceController;
+use App\Http\Controllers\API\McpConnectionController;
+use App\Http\Controllers\API\McpOAuthController;
 use App\Http\Controllers\API\DataIntegrityController;
 use App\Http\Controllers\API\BillingController;
 use App\Http\Controllers\API\PaddleWebhookController;
@@ -193,6 +195,9 @@ Route::prefix('screener')->group(function () {
 
 Route::get('/broker-research', [BrokerResearchController::class, 'getBrokerResearch']);
 
+// MCP OAuth â€” public client lookup for the authorize screen
+Route::get('oauth/clients/{id}', [McpOAuthController::class, 'showClient']);
+
 // Plans (public, for the pricing page) and the Paddle webhook (authenticated by its signature)
 Route::get('plans', [PlanController::class, 'index']);
 Route::post('paddle/webhook', [PaddleWebhookController::class, 'handle'])
@@ -234,6 +239,14 @@ Route::middleware(['auth:sanctum', 'abilities:web', 'active'])->group(function (
         Route::post('/', [AnalystTargetController::class, 'store']);
         Route::patch('/{id}/status', [AnalystTargetController::class, 'updateStatus']);
         Route::delete('/{id}', [AnalystTargetController::class, 'destroy']);
+    });
+
+    Route::post('oauth/authorize', [McpOAuthController::class, 'approve'])->middleware('throttle:20,1');
+
+    Route::prefix('mcp')->group(function () {
+        Route::get('connections', [McpConnectionController::class, 'index']);
+        Route::post('connections', [McpConnectionController::class, 'store'])->middleware('throttle:10,1');
+        Route::delete('connections/{id}', [McpConnectionController::class, 'destroy'])->whereUuid('id');
     });
 
     Route::prefix('journal')->group(function () {

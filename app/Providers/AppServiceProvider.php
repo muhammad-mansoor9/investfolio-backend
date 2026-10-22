@@ -1,6 +1,7 @@
 <?php
 namespace App\Providers;
 
+use Illuminate\Support\Facades\URL;
 use Illuminate\Support\ServiceProvider;
 use Laravel\Sanctum\Sanctum;
 
@@ -17,5 +18,11 @@ class AppServiceProvider extends ServiceProvider
          * with UUID primary key support.
          */
         Sanctum::usePersonalAccessTokenModel(\App\Models\PersonalAccessToken::class);
+
+        // Behind a TLS-terminating proxy the request looks like http, which would
+        // make url() emit http:// links in the MCP OAuth discovery metadata
+        if (str_starts_with(config('app.url'), 'https://')) {
+            URL::forceScheme('https');
+        }
     }
 }
