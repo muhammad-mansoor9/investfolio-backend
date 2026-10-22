@@ -369,7 +369,7 @@ class StocksMomentumController extends BaseController
                     $signalData = [
                         'state' => $signalState,
                         'value' => self::SIGNAL_STATE_MAP[$signalState],
-                        'actual_value' => !empty($signal['signal_value']) ? (float)$signal['signal_value'] : null,
+                        'actual_value' => is_numeric($signal['signal_value']) ? (float)$signal['signal_value'] : null,
                         'metadata' => $decodedMetadata,
                         'signal_date' => $signal['signal_date'],
                     ];

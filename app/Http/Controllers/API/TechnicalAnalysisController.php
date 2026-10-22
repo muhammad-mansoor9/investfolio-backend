@@ -142,6 +142,11 @@ class TechnicalAnalysisController extends Controller
             'sd_1m' => $date,  // 1M indicator latest date
         ];
 
+        // The liquidity clause references s.* and sp.*, which only exist inside the CTE.
+        $liquidShariahSql = $investfolioLiquidShariah
+            ? "\n      AND " . (new InvestfolioLiquidShariahFilterService())->getStocksWhereClause()
+            : '';
+
         $baseCte = "
 WITH base_data AS (
     SELECT
@@ -149,6 +154,7 @@ WITH base_data AS (
         s.symbol,
         s.description,
         s.sector_id,
+        s.is_shariah,
         sp.close                                                            AS price,
         sp.change,
         sp.volume,
@@ -221,15 +227,10 @@ WITH base_data AS (
             WHERE stock_id = s.id AND timeframe = 'monthly' AND date <= :sd_1m
         )
     WHERE s.is_active = true
-      AND s.market_cap > 0
+      AND s.market_cap > 0{$liquidShariahSql}
 )";
 
         $conditions = $this->buildFilterConditions($filters, $bindings);
-
-        if ($investfolioLiquidShariah) {
-            $investfolioService = new InvestfolioLiquidShariahFilterService();
-            $conditions[] = $investfolioService->getStocksWhereClause();
-        }
 
         $whereSql   = empty($conditions) ? '' : "\nWHERE " . implode("\n  AND ", $conditions);
         $sql        = $baseCte . "\nSELECT * FROM base_data bd" . $whereSql . "\nORDER BY bd.symbol";
@@ -426,6 +427,7 @@ WITH base_data AS (
             'symbol'      => $row->symbol,
             'description' => $row->description,
             'sector_id'   => $row->sector_id,
+            'is_shariah'  => (bool) $row->is_shariah,
             'price'       => $f($row->price),
             'change'      => $f($row->change),
             'volume'      => $row->volume !== null ? (int) $row->volume : null,

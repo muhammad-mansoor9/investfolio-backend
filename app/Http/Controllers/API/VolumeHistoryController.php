@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
+use App\Services\InvestfolioLiquidShariahFilterService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -23,6 +24,7 @@ class VolumeHistoryController extends Controller
                 'stock_id' => 'nullable|string',
                 'start_date' => 'required|date',
                 'end_date' => 'required|date|after_or_equal:start_date',
+                'investfolio_liquid_shariah' => 'sometimes|in:0,1,true,false',
             ]);
 
             if ($validator->fails()) {
@@ -43,7 +45,7 @@ class VolumeHistoryController extends Controller
                 return $this->getIndividualStockAnalysis($stockId, $startDate, $endDate);
             } else {
                 // All stocks analysis (aggregated)
-                return $this->getAllStocksAnalysis($startDate, $endDate);
+                return $this->getAllStocksAnalysis($startDate, $endDate, $request->boolean('investfolio_liquid_shariah', false));
             }
 
         } catch (\Exception $e) {
@@ -190,10 +192,20 @@ class VolumeHistoryController extends Controller
     /**
      * Get analysis for all stocks (aggregated per stock for the date range)
      */
-    private function getAllStocksAnalysis($startDate, $endDate): JsonResponse
+    private function getAllStocksAnalysis($startDate, $endDate, bool $investfolioLiquidShariah): JsonResponse
     {
-        // Get aggregated data per stock for the entire date range
-        $stocksData = DB::table('stock_prices as sp')
+        // rn_asc / rn_desc rank each stock's trading days in the range, so the first open, last
+        // close and latest 3/20-day volumes come out of one aggregate instead of per-stock queries.
+        $rankedPrices = DB::table('stock_prices')
+            ->select([
+                'stock_id', 'date', 'open', 'high', 'low', 'close', 'volume',
+                DB::raw('ROW_NUMBER() OVER (PARTITION BY stock_id ORDER BY date ASC) AS rn_asc'),
+                DB::raw('ROW_NUMBER() OVER (PARTITION BY stock_id ORDER BY date DESC) AS rn_desc'),
+            ])
+            ->whereBetween('date', [$startDate, $endDate]);
+
+        $stocksData = DB::query()
+            ->fromSub($rankedPrices, 'sp')
             ->join('stocks as s', 'sp.stock_id', '=', 's.id')
             ->leftJoin('sectors as sec', 's.sector_id', '=', 'sec.id')
             ->leftJoin('exchange_markets as em', 's.exchange_id', '=', 'em.id')
@@ -203,6 +215,8 @@ class VolumeHistoryController extends Controller
                 's.description',
                 's.is_shariah',
                 's.market_cap',
+                's.free_float',
+                's.total_shares_outstanding',
                 'sec.id as sector_id',
                 'sec.name as sector_name',
                 'em.id as exchange_id',
@@ -214,41 +228,40 @@ class VolumeHistoryController extends Controller
                 DB::raw('AVG(sp.close) as avg_close'),
                 DB::raw('MAX(sp.high) as highest_price'),
                 DB::raw('MIN(sp.low) as lowest_price'),
-                // Get first open and last close for the date range
-                DB::raw("(SELECT open FROM stock_prices WHERE stock_id = s.id AND date >= '{$startDate}' ORDER BY date ASC LIMIT 1) as opening_price"),
-                DB::raw("(SELECT close FROM stock_prices WHERE stock_id = s.id AND date <= '{$endDate}' ORDER BY date DESC LIMIT 1) as closing_price"),
+                DB::raw('MAX(sp.open) FILTER (WHERE sp.rn_asc = 1) as opening_price'),
+                DB::raw('MAX(sp.close) FILTER (WHERE sp.rn_desc = 1) as closing_price'),
+                DB::raw('SUM(sp.volume) FILTER (WHERE sp.rn_desc <= 3) as latest_3d_volume'),
+                DB::raw('SUM(sp.volume) FILTER (WHERE sp.rn_desc <= 20) as latest_20d_volume'),
                 DB::raw('COUNT(*) as trading_days')
             ])
             ->where('s.is_active', true)
             ->where('s.market_cap', '>', 0)
-            ->whereBetween('sp.date', [$startDate, $endDate])
+            ->when($investfolioLiquidShariah, fn ($query) => $query->where('s.is_shariah', true))
             ->groupBy([
                 's.id', 's.symbol', 's.description', 's.is_shariah', 's.market_cap',
+                's.free_float', 's.total_shares_outstanding',
                 'sec.id', 'sec.name', 'em.id', 'em.name'
             ])
             ->orderBy('s.symbol', 'asc')
             ->get();
 
+        // The service's SQL clauses need one price row per stock; this query aggregates many
+        // trading days per stock, so the filter is applied to the grouped rows instead.
+        if ($investfolioLiquidShariah) {
+            $filterService = new InvestfolioLiquidShariahFilterService();
+            $stocksData = $stocksData->filter(fn ($item) => $filterService->passesFilter($item))->values();
+        }
+
         // Calculate price changes and moving averages
-        $data = $stocksData->map(function ($item) use ($startDate, $endDate) {
+        $data = $stocksData->map(function ($item) {
             $opening = (float) $item->opening_price;
             $closing = (float) $item->closing_price;
 
             $priceChange = $closing - $opening;
             $priceChangePercent = $opening > 0 ? ($priceChange / $opening) * 100 : 0;
 
-            // Calculate 3-day and 20-day moving averages for this stock
-            $volumes = DB::table('stock_prices')
-                ->where('stock_id', $item->stock_id)
-                ->whereBetween('date', [$startDate, $endDate])
-                ->orderBy('date', 'desc')
-                ->limit(20)
-                ->pluck('volume')
-                ->toArray();
-
-            $volumesCount = count($volumes);
-            $avg3d = $volumesCount >= 3 ? array_sum(array_slice($volumes, 0, 3)) / 3 : null;
-            $avg20d = $volumesCount >= 20 ? array_sum($volumes) / 20 : null;
+            $avg3d = $item->trading_days >= 3 ? (float) $item->latest_3d_volume / 3 : null;
+            $avg20d = $item->trading_days >= 20 ? (float) $item->latest_20d_volume / 20 : null;
 
             return [
                 'stock_id' => $item->stock_id,
@@ -281,14 +294,16 @@ class VolumeHistoryController extends Controller
             ];
         });
 
+        $highestVolumeStock = $data->sortByDesc('total_volume')->first();
+
         // Overall summary
         $summary = [
             'total_stocks' => $data->count(),
             'total_volume' => $data->sum('total_volume'),
             'avg_volume_per_stock' => $data->avg('total_volume'),
-            'highest_volume_stock' => $data->first() ? [
-                'symbol' => $data->first()['symbol'],
-                'volume' => $data->first()['total_volume']
+            'highest_volume_stock' => $highestVolumeStock ? [
+                'symbol' => $highestVolumeStock['symbol'],
+                'volume' => $highestVolumeStock['total_volume']
             ] : null,
         ];
 
