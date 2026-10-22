@@ -29,6 +29,7 @@ return [
 
     'max_age' => 0,
 
-    'supports_credentials' => true,
+    // Auth is bearer tokens only; credentialed CORS with a wildcard origin would reflect any site.
+    'supports_credentials' => false,
 
 ];

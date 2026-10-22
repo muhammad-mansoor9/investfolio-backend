@@ -43,10 +43,15 @@ use Illuminate\Support\Facades\Route;
 // Auth â€” public
 Route::post('auth/register', [AuthController::class, 'register'])->middleware('throttle:10,1');
 Route::post('auth/login', [AuthController::class, 'login'])->middleware('throttle:10,1');
-Route::get('auth/google/redirect', [AuthController::class, 'googleRedirect']);
-Route::get('auth/google/callback', [AuthController::class, 'googleCallback']);
+Route::get('auth/google/redirect', [AuthController::class, 'googleRedirect'])->middleware('throttle:20,1');
+Route::get('auth/google/callback', [AuthController::class, 'googleCallback'])->middleware('throttle:20,1');
+Route::post('auth/google/exchange', [AuthController::class, 'googleExchange'])->middleware('throttle:10,1');
 Route::post('auth/forgot-password', [AuthController::class, 'forgotPassword'])->middleware('throttle:5,1');
 Route::post('auth/reset-password', [AuthController::class, 'resetPassword'])->middleware('throttle:5,1');
+Route::get('auth/email/verify/{id}/{hash}', [AuthController::class, 'verifyEmail'])
+    ->whereUuid('id')
+    ->middleware('throttle:10,1')
+    ->name('auth.email.verify');
 
 // Landing Page â€” public
 Route::prefix('landing')->group(function () {
@@ -200,11 +205,13 @@ Route::prefix('valuations')->group(function () {
 });
 
 // Authenticated routes
-Route::middleware('auth:sanctum')->group(function () {
+// Web-session routes: MCP tokens (ability "mcp") are rejected by abilities:web.
+Route::middleware(['auth:sanctum', 'abilities:web', 'active'])->group(function () {
     Route::post('auth/logout', [AuthController::class, 'logout']);
     Route::post('auth/logout-all', [AuthController::class, 'logoutAll']);
     Route::get('auth/sessions', [AuthController::class, 'sessions']);
-    Route::delete('auth/sessions/{id}', [AuthController::class, 'revokeSession']);
+    Route::delete('auth/sessions/{id}', [AuthController::class, 'revokeSession'])->whereUuid('id');
+    Route::post('auth/email/resend', [AuthController::class, 'resendVerification'])->middleware('throttle:3,1');
     Route::get('user', [AuthController::class, 'user']);
 
     Route::prefix('volume')->group(function () {

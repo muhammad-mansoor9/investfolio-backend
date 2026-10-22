@@ -6,15 +6,14 @@ REST API for the PSX analysis platform.
 
 - **PHP** 8.1+ / **Laravel** 10
 - **Database**: PostgreSQL only (single database with two user roles: `postgres` for DDL, `psx_user` for runtime)
-- **Auth**: Laravel Passport (OAuth2); Sanctum also installed but Passport is primary
-- **HTTP Client**: Guzzle 7; Google API Client for OAuth login
+- **Auth**: Laravel Sanctum personal access tokens (bearer only, no cookies); Google sign-in via Socialite (stateless)
+- **HTTP Client**: Guzzle 7
 - **Dev tools**: Laravel Pint (linter), Ignition (error pages), Sail (Docker), PHPUnit 10 + Mockery
 
 ## Common Commands
 
 ```bash
 php artisan serve                        # dev server → :8000
-php artisan passport:install             # generate OAuth keys (once)
 php artisan tinker                       # REPL
 php artisan pint                         # lint / auto-fix code style
 ./vendor/bin/phpunit                     # run tests
@@ -33,12 +32,12 @@ app/
 ├── Models/                 # Eloquent models
 ├── Services/               # Business logic services (PaddleService, etc.)
 ├── Traits/                 # Reusable model traits (HasUuid, HasMarketData, etc.)
-├── Providers/              # Service providers (AuthServiceProvider registers Passport)
+├── Providers/              # Service providers (AppServiceProvider registers the UUID PersonalAccessToken model)
 └── Console/Commands/       # Artisan commands
 database/
 ├── sql/                    # SQL utilities (DDL not managed here)
 routes/
-└── api.php                 # All routes (public on top, auth:api group at bottom)
+└── api.php                 # All routes (public on top, auth:sanctum web group at bottom)
 ```
 
 ## Controllers
@@ -107,12 +106,14 @@ Two Postgres users share the schema: `postgres` (DDL owner of most tables) and `
 
 ## Authentication
 
-Routes that need auth use `auth:api` middleware (Passport token). Most data-read routes are public. User model has `getPackageLimits()` for subscription-based feature gating.
+Authenticated web routes sit in the `['auth:sanctum', 'abilities:web', 'active']` group. Web logins issue `psx-web` tokens (ability `web`, 30-day expiry, newest 5 kept); MCP connections issue non-expiring `mcp:*` tokens (ability `mcp`) that only the `/mcp` endpoint accepts — never prune or revoke them from auth flows. Most data-read routes are public.
+
+Email/password signups must verify their email (signed link → `GET /api/auth/email/verify/{id}/{hash}` → frontend `/auth/verify-email?status=`). Google sign-in hands the frontend a one-time code in the URL fragment (`/auth/callback#code=&state=`), exchanged at `POST /api/auth/google/exchange`; tokens never appear in URLs.
 
 ## Adding a New Endpoint
 
 1. Create controller in `app/Http/Controllers/API/`
-2. Add route in `routes/api.php` (public block or `auth:api` group)
+2. Add route in `routes/api.php` (public block or the `auth:sanctum` web group)
 3. Register controller `use` at top of `api.php`
 
 ## Documentation Rules

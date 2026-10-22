@@ -3,17 +3,19 @@
 namespace App\Notifications;
 
 use Illuminate\Auth\Notifications\ResetPassword as LaravelResetPassword;
+use Illuminate\Bus\Queueable;
+use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\MailMessage;
 
-class ResetPassword extends LaravelResetPassword
+class ResetPassword extends LaravelResetPassword implements ShouldQueue
 {
-    /**
-     * Get the reset password notification mail message for the given reset token.
-     */
-    public function toMail(object $notifiable): MailMessage
+    use Queueable;
+
+    public function toMail($notifiable): MailMessage
     {
-        $frontendUrl = env('FRONTEND_URL', 'http://localhost:3000');
-        $resetUrl = $frontendUrl . '/auth/reset-password?token=' . $this->token . '&email=' . urlencode($notifiable->getEmailForPasswordReset());
+        $resetUrl = rtrim(config('app.frontend_url'), '/')
+            . '/auth/reset-password?token=' . urlencode($this->token)
+            . '&email=' . urlencode($notifiable->getEmailForPasswordReset());
 
         return (new MailMessage())
             ->subject('Reset Password Notification')
