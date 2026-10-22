@@ -36,15 +36,12 @@ class CurrencyRate extends PgsqlModel
      *
      * @return array<string, string>
      */
-    protected function casts(): array
-    {
-        return [
-            'rate' => 'float',
-            'date' => 'date',
-            'created_at' => 'datetime',
-            'updated_at' => 'datetime',
-        ];
-    }
+    protected $casts = [
+        'rate' => 'float',
+        'date' => 'date',
+        'created_at' => 'datetime',
+        'updated_at' => 'datetime',
+    ];
 
     public static function current(string $currency): float
     {

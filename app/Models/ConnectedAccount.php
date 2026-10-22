@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 
 declare(strict_types=1);
 
@@ -39,13 +39,10 @@ class ConnectedAccount extends PgsqlModel
      *
      * @return array<string, string>
      */
-    protected function casts(): array
-    {
-        return [
-            'created_at' => 'datetime',
-            'expires_at' => 'datetime',
-        ];
-    }
+    protected $casts = [
+        'created_at' => 'datetime',
+        'expires_at' => 'datetime',
+    ];
 
     /**
      * Get user of the connected account.

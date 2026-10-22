@@ -38,15 +38,12 @@ class User extends Authenticatable
         'remember_token',
     ];
 
-    protected function casts(): array
-    {
-        return [
-            'email_verified_at' => 'datetime',
-            'password'          => 'hashed',
-            'is_active'         => 'boolean',
-            'preferences'       => 'array',
-        ];
-    }
+    protected $casts = [
+        'email_verified_at' => 'datetime',
+        'password'          => 'hashed',
+        'is_active'         => 'boolean',
+        'preferences'       => 'array',
+    ];
 
     protected static function boot(): void
     {

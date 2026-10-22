@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 
 use App\Http\Controllers\API\AnalystTargetController;
 use App\Http\Controllers\API\AuthController;

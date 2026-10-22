@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 
 declare(strict_types=1);
 
@@ -44,13 +44,10 @@ class BackupImport extends PgsqlModel
 
     protected $appends = [];
 
-    protected function casts(): array
-    {
-        return [
-            'has_errors' => 'boolean',
-            'completed_at' => 'datetime',
-        ];
-    }
+    protected $casts = [
+        'has_errors' => 'boolean',
+        'completed_at' => 'datetime',
+    ];
 
     public function user()
     {
