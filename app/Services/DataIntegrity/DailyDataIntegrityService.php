@@ -2,425 +2,295 @@
 
 namespace App\Services\DataIntegrity;
 
-use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Cache;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 
+/**
+ * Checks that every trading day has stock prices, daily indicators, FIPI/LIPI flows and UIN settlement.
+ * A trading day is any date the exchange produced stock or index prices, so holidays and the occasional
+ * weekend session need no calendar of their own.
+ */
 class DailyDataIntegrityService
 {
-    private const CACHE_TTL = 3600; // 1 hour for monthly aggregations
+    public const DATASETS = ['prices', 'indicators', 'fipiTrading', 'fipiMarket', 'uin'];
 
-    /**
-     * Get monthly integrity overview
-     *
-     * @param string $month Format: YYYY-MM
-     * @return array
-     */
-    public function getMonthlyIntegrity(string $month): array
+    private const CACHE_TTL = 900;
+    private const RECENT_GAPS_LIMIT = 12;
+    private const PRICE_SHORTFALL_RATIO = 0.9;
+    private const MIN_DAYS_FOR_UNCOVERED = 3;
+
+    private const DATASET_DATES = [
+        'prices' => "SELECT date::text AS d FROM stock_prices GROUP BY date",
+        'indicators' => "SELECT date::text AS d FROM stock_indicators WHERE timeframe = 'daily' GROUP BY date",
+        'fipiTrading' => "SELECT trade_date::text AS d FROM fipi_lipi_trading_data GROUP BY trade_date",
+        'fipiMarket' => "SELECT trade_date::text AS d FROM fipi_lipi_market_data GROUP BY trade_date",
+        'uin' => "SELECT settlement_date::text AS d FROM uin_settlement_data GROUP BY settlement_date",
+    ];
+
+    // Per-stock datasets: every stock priced on a day should also have a row here for that day.
+    private const PER_STOCK = [
+        'indicators' => ['table' => 'stock_indicators', 'date' => 'date', 'filter' => "AND m.timeframe = 'daily'"],
+        'uin' => ['table' => 'uin_settlement_data', 'date' => 'settlement_date', 'filter' => ''],
+    ];
+
+    public function getMonth(string $month): array
     {
-        $cacheKey = "data_integrity:daily:{$month}";
+        return Cache::remember("data_integrity:daily:{$month}", self::CACHE_TTL, function () use ($month) {
+            $start = Carbon::createFromFormat('Y-m-d', "{$month}-01", 'Asia/Karachi')->startOfDay();
+            $end = $start->copy()->endOfMonth()->startOfDay()->min(Carbon::now('Asia/Karachi')->startOfDay());
+            $from = $start->toDateString();
+            $to = $end->toDateString();
 
-        return Cache::remember($cacheKey, self::CACHE_TTL, function () use ($month) {
-            // Parse month
-            $startDate = Carbon::createFromFormat('Y-m', $month)->startOfMonth()->toDateString();
-            $endDate = Carbon::createFromFormat('Y-m', $month)->endOfMonth()->toDateString();
+            $overview = $this->overview();
+            $latestTradingDate = $overview['latestTradingDate'];
+            $tradingDates = $this->tradingDates($from, $to);
+            $counts = $this->countsByDate($from, $to);
+            $priceBaseline = $this->median(array_values($counts['prices']));
 
-            // Get active stocks count for display
-            $activeStocksCount = $this->getActiveStocksCount();
-
-            // Fetch all dataset aggregations
-            $pricesByDate = $this->getStockPricesByDate($startDate, $endDate);
-            $indicatorsByDate = $this->getIndicatorsByDate($startDate, $endDate);
-            $signalsByDate = $this->getSignalsByDate($startDate, $endDate);
-            $fipiTradingByDate = $this->getFipiTradingByDate($startDate, $endDate);
-            $fipiMarketByDate = $this->getFipiMarketByDate($startDate, $endDate);
-            $uinByDate = $this->getUinSettlementByDate($startDate, $endDate);
-
-            // Build daily status rows
-            $currentDate = Carbon::parse($startDate);
-            $endDateCarbon = Carbon::parse($endDate);
-            $today = Carbon::now()->startOfDay();
-            $days = [];
-
-            while ($currentDate <= $endDateCarbon) {
-                // Skip future dates
-                if ($currentDate > $today) {
-                    $currentDate->addDay();
-                    continue;
-                }
-
-                $dateStr = $currentDate->toDateString();
-                $isWeekend = $currentDate->isWeekend();
-
-                // Assemble dataset availability for this date
-                $datasets = DataIntegrityStatus::getEmptyDatasetStructure();
-                $datasets[DataIntegrityStatus::DATASET_PRICES] = $pricesByDate[$dateStr] ?? ['available' => false, 'count' => 0];
-                $datasets[DataIntegrityStatus::DATASET_INDICATORS] = $indicatorsByDate[$dateStr] ?? ['available' => false, 'count' => 0];
-                $datasets[DataIntegrityStatus::DATASET_SIGNALS] = $signalsByDate[$dateStr] ?? ['available' => false, 'count' => 0];
-                $datasets[DataIntegrityStatus::DATASET_FIPI_TRADING] = $fipiTradingByDate[$dateStr] ?? ['available' => false, 'count' => 0];
-                $datasets[DataIntegrityStatus::DATASET_FIPI_MARKET] = $fipiMarketByDate[$dateStr] ?? ['available' => false, 'count' => 0];
-                $datasets[DataIntegrityStatus::DATASET_UIN_SETTLEMENT] = $uinByDate[$dateStr] ?? ['available' => false, 'count' => 0];
-
-                // Determine status - validate prices and indicators match
-                $status = $this->determineDateStatusWithValidation(
-                    $datasets,
-                    $activeStocksCount,
-                    $isWeekend
-                );
-
-                // Only identify issues for problematic statuses, not for expected closures
-                $issues = in_array($status, [
-                    DataIntegrityStatus::STATUS_WEEKEND,
-                    DataIntegrityStatus::STATUS_HOLIDAY,
-                ])
-                    ? []
-                    : $this->identifyIssues($datasets, $status);
-
-                $days[] = [
-                    'date' => $dateStr,
-                    'dayOfWeek' => $currentDate->format('l'),
-                    'activeStocks' => $activeStocksCount,
-                    'status' => $status,
-                    'datasets' => $datasets,
-                    'issues' => $issues,
-                ];
-
-                $currentDate->addDay();
+            $missingByDay = [];
+            $uncovered = [];
+            foreach (array_keys(self::PER_STOCK) as $dataset) {
+                [$missingByDay[$dataset], $uncovered[$dataset]] = $this->perStockGaps($dataset, $from, $to, $counts[$dataset]);
             }
 
-            // Calculate summary
-            $summary = $this->calculateMonthlySummary($days);
+            $today = Carbon::now('Asia/Karachi')->toDateString();
+            $days = [];
+            for ($date = $start->copy(); $date <= $end; $date->addDay()) {
+                $key = $date->toDateString();
+                if (isset($tradingDates[$key])) {
+                    $days[] = $this->tradingDay($key, $counts, $missingByDay, $overview['datasets'], $priceBaseline, $key === $latestTradingDate);
+                } elseif ($key !== $today) {
+                    $days[] = $this->nonTradingDay($date);
+                }
+            }
 
             return [
                 'month' => $month,
-                'summary' => $summary,
-                'days' => $days,
+                'latestTradingDate' => $latestTradingDate,
+                'summary' => $this->summarize($days),
+                'uncovered' => $uncovered,
+                'days' => array_reverse($days),
+                'datasets' => $overview['datasets'],
             ];
         });
     }
 
-    /**
-     * Get detailed daily integrity report
-     *
-     * @param string $date Format: YYYY-MM-DD
-     * @return array
-     */
-    public function getDailyIntegrity(string $date): array
+    private function tradingDates(string $from, string $to): array
     {
-        $pricesDetail = $this->getStockPricesDetail($date);
-        $indicatorsDetail = $this->getIndicatorsDetail($date);
-        $signalsDetail = $this->getSignalsDetail($date);
-        $fipiTradingDetail = $this->getFipiTradingDetail($date);
-        $fipiMarketDetail = $this->getFipiMarketDetail($date);
-        $uinDetail = $this->getUinSettlementDetail($date);
-
-        $datasets = DataIntegrityStatus::getEmptyDatasetStructure();
-        $datasets[DataIntegrityStatus::DATASET_PRICES] = [
-            'available' => $pricesDetail,
-            'count' => $pricesDetail ? 1 : 0,
-        ];
-        $datasets[DataIntegrityStatus::DATASET_INDICATORS] = [
-            'available' => $indicatorsDetail,
-            'count' => $indicatorsDetail ? 1 : 0,
-        ];
-        $datasets[DataIntegrityStatus::DATASET_SIGNALS] = [
-            'available' => $signalsDetail,
-            'count' => $signalsDetail ? 1 : 0,
-        ];
-        $datasets[DataIntegrityStatus::DATASET_FIPI_TRADING] = [
-            'available' => $fipiTradingDetail,
-            'count' => $fipiTradingDetail ? 1 : 0,
-        ];
-        $datasets[DataIntegrityStatus::DATASET_FIPI_MARKET] = [
-            'available' => $fipiMarketDetail,
-            'count' => $fipiMarketDetail ? 1 : 0,
-        ];
-        $datasets[DataIntegrityStatus::DATASET_UIN_SETTLEMENT] = [
-            'available' => $uinDetail,
-            'count' => $uinDetail ? 1 : 0,
-        ];
-
-        $dateCarbon = Carbon::parse($date);
-        $isWeekend = $dateCarbon->isWeekend();
-        $activeStocksCount = $this->getActiveStocksCount();
-
-        $status = $this->determineDateStatusWithValidation(
-            $datasets,
-            $activeStocksCount,
-            $isWeekend
+        $rows = DB::select(
+            "SELECT date::text AS d FROM stock_prices WHERE date BETWEEN ? AND ? GROUP BY date
+             UNION
+             SELECT date::text FROM index_prices WHERE date BETWEEN ? AND ? GROUP BY date",
+            [$from, $to, $from, $to]
         );
 
-        $issues = in_array($status, [
-            DataIntegrityStatus::STATUS_WEEKEND,
-            DataIntegrityStatus::STATUS_HOLIDAY,
-        ])
-            ? []
-            : $this->identifyIssues($datasets, $status);
+        return array_fill_keys(array_column($rows, 'd'), true);
+    }
+
+    private function countsByDate(string $from, string $to): array
+    {
+        $pairs = fn (string $sql) => array_map('intval', array_column(DB::select($sql, [$from, $to]), 'c', 'd'));
+
+        return [
+            'prices' => $pairs("SELECT date::text AS d, COUNT(*) AS c FROM stock_prices WHERE date BETWEEN ? AND ? GROUP BY date"),
+            'indicators' => $pairs("SELECT date::text AS d, COUNT(*) AS c FROM stock_indicators WHERE timeframe = 'daily' AND date BETWEEN ? AND ? GROUP BY date"),
+            'fipiTrading' => $pairs("SELECT trade_date::text AS d, COUNT(*) AS c FROM fipi_lipi_trading_data WHERE trade_date BETWEEN ? AND ? GROUP BY trade_date"),
+            'fipiMarket' => $pairs("SELECT trade_date::text AS d, COUNT(*) AS c FROM fipi_lipi_market_data WHERE trade_date BETWEEN ? AND ? GROUP BY trade_date"),
+            'uin' => $pairs("SELECT settlement_date::text AS d, COUNT(*) AS c FROM uin_settlement_data WHERE settlement_date BETWEEN ? AND ? GROUP BY settlement_date"),
+        ];
+    }
+
+    /**
+     * Stocks priced on a day the dataset was loaded but missing their own row. Stocks the feed never carried
+     * all month are split out as "uncovered" so one permanently absent symbol does not flag every day.
+     *
+     * @return array{0: array<string, string[]>, 1: string[]}
+     */
+    private function perStockGaps(string $dataset, string $from, string $to, array $datasetCounts): array
+    {
+        $loadedDates = array_keys(array_filter($datasetCounts));
+        if (empty($loadedDates)) {
+            return [[], []];
+        }
+
+        ['table' => $table, 'date' => $dateColumn, 'filter' => $filter] = self::PER_STOCK[$dataset];
+        $loadedDatesLiteral = '{' . implode(',', $loadedDates) . '}';
+
+        $missing = DB::select(
+            "SELECT sp.date::text AS d, s.symbol FROM stock_prices sp
+             JOIN stocks s ON s.id = sp.stock_id
+             WHERE sp.date BETWEEN ? AND ? AND sp.date = ANY(?::date[])
+               AND NOT EXISTS (SELECT 1 FROM {$table} m WHERE m.stock_id = sp.stock_id AND m.{$dateColumn} = sp.date {$filter})
+             ORDER BY s.symbol",
+            [$from, $to, $loadedDatesLiteral]
+        );
+
+        $missingDaysBySymbol = array_count_values(array_column($missing, 'symbol'));
+        $pricedDaysBySymbol = empty($missingDaysBySymbol) ? [] : array_map('intval', array_column(DB::select(
+            "SELECT s.symbol, COUNT(*) AS c FROM stock_prices sp
+             JOIN stocks s ON s.id = sp.stock_id
+             WHERE sp.date BETWEEN ? AND ? AND sp.date = ANY(?::date[]) AND s.symbol = ANY(?::text[])
+             GROUP BY s.symbol",
+            [$from, $to, $loadedDatesLiteral, '{' . implode(',', array_map(fn ($s) => '"' . $s . '"', array_keys($missingDaysBySymbol))) . '}']
+        ), 'c', 'symbol'));
+
+        $uncovered = array_keys(array_filter(
+            $missingDaysBySymbol,
+            fn ($days, $symbol) => $days >= self::MIN_DAYS_FOR_UNCOVERED && $days === ($pricedDaysBySymbol[$symbol] ?? 0),
+            ARRAY_FILTER_USE_BOTH
+        ));
+
+        $byDay = [];
+        foreach ($missing as $row) {
+            if (!in_array($row->symbol, $uncovered, true)) {
+                $byDay[$row->d][] = $row->symbol;
+            }
+        }
+
+        return [$byDay, $uncovered];
+    }
+
+    private function tradingDay(
+        string $date,
+        array $counts,
+        array $missingByDay,
+        array $overview,
+        float $priceBaseline,
+        bool $isLatest
+    ): array {
+        $datasets = [];
+        foreach (self::DATASETS as $dataset) {
+            $count = $counts[$dataset][$date] ?? 0;
+            $missingSymbols = $missingByDay[$dataset][$date] ?? [];
+            $firstDate = $overview[$dataset]['firstDate'];
+
+            $status = match (true) {
+                $firstDate === null || $date < $firstDate => 'untracked',
+                $count === 0 => $isLatest ? 'pending' : 'missing',
+                $dataset === 'prices' && $count < $priceBaseline * self::PRICE_SHORTFALL_RATIO => 'partial',
+                !empty($missingSymbols) => 'partial',
+                default => 'ok',
+            };
+
+            $datasets[$dataset] = ['status' => $status, 'count' => $count, 'missingSymbols' => $missingSymbols];
+        }
+
+        $statuses = array_column($datasets, 'status');
+        $status = match (true) {
+            in_array('missing', $statuses, true), in_array('partial', $statuses, true) => 'issues',
+            in_array('pending', $statuses, true) => 'pending',
+            default => 'complete',
+        };
 
         return [
             'date' => $date,
-            'dayOfWeek' => $dateCarbon->format('l'),
+            'dayOfWeek' => Carbon::parse($date)->format('l'),
             'status' => $status,
             'datasets' => $datasets,
-            'issues' => $issues,
         ];
     }
 
-    // ========== AGGREGATION QUERIES BY DATE ==========
-
-    private function getActiveStocksCount(): int
+    private function nonTradingDay(Carbon $date): array
     {
-        return (int) DB::table('stocks')->where('is_active', true)->count();
+        return [
+            'date' => $date->toDateString(),
+            'dayOfWeek' => $date->format('l'),
+            'status' => $date->isWeekend() ? 'weekend' : 'closed',
+            'datasets' => null,
+        ];
     }
 
-    private function getStockPricesByDate(string $startDate, string $endDate): array
+    private function summarize(array $days): array
     {
-        $results = DB::table('stock_prices')
-            ->selectRaw("DATE(date) as trading_date, COUNT(DISTINCT stock_id) as stock_count")
-            ->whereBetween(DB::raw('DATE(date)'), [$startDate, $endDate])
-            ->groupBy(DB::raw('DATE(date)'))
-            ->orderBy(DB::raw('DATE(date)'))
-            ->get();
-
-        $output = [];
-        foreach ($results as $row) {
-            $output[$row->trading_date] = [
-                'available' => true,
-                'count' => (int) $row->stock_count,
-            ];
-        }
-        return $output;
-    }
-
-    private function getIndicatorsByDate(string $startDate, string $endDate): array
-    {
-        // Only fetch daily timeframe indicators
-        $results = DB::table('stock_indicators')
-            ->selectRaw("DATE(date) as data_date, COUNT(DISTINCT stock_id) as stock_count")
-            ->where('timeframe', 'daily')
-            ->whereBetween('date', [$startDate, $endDate])
-            ->groupBy(DB::raw('DATE(date)'))
-            ->orderBy(DB::raw('DATE(date)'))
-            ->get();
-
-        $output = [];
-        foreach ($results as $row) {
-            $output[$row->data_date] = [
-                'available' => true,
-                'count' => (int) $row->stock_count,
-            ];
-        }
-        return $output;
-    }
-
-    private function getSignalsByDate(string $startDate, string $endDate): array
-    {
-        $results = DB::table('stock_signals')
-            ->selectRaw("DATE(signal_date) as signal_date, COUNT(DISTINCT stock_id) as stock_count")
-            ->whereBetween('signal_date', [$startDate, $endDate])
-            ->groupBy(DB::raw('DATE(signal_date)'))
-            ->orderBy(DB::raw('DATE(signal_date)'))
-            ->get();
-
-        $output = [];
-        foreach ($results as $row) {
-            $output[$row->signal_date] = [
-                'available' => true,
-                'count' => (int) $row->stock_count,
-            ];
-        }
-        return $output;
-    }
-
-    private function getFipiTradingByDate(string $startDate, string $endDate): array
-    {
-        $results = DB::table('fipi_lipi_trading_data')
-            ->selectRaw("DATE(trade_date) as trade_date, COUNT(*) as record_count")
-            ->whereBetween('trade_date', [$startDate, $endDate])
-            ->groupBy(DB::raw('DATE(trade_date)'))
-            ->orderBy(DB::raw('DATE(trade_date)'))
-            ->get();
-
-        $output = [];
-        foreach ($results as $row) {
-            $output[$row->trade_date] = [
-                'available' => true,
-                'count' => (int) $row->record_count,
-            ];
-        }
-        return $output;
-    }
-
-    private function getFipiMarketByDate(string $startDate, string $endDate): array
-    {
-        $results = DB::table('fipi_lipi_market_data')
-            ->selectRaw("DATE(trade_date) as trade_date, COUNT(*) as record_count")
-            ->whereBetween('trade_date', [$startDate, $endDate])
-            ->groupBy(DB::raw('DATE(trade_date)'))
-            ->orderBy(DB::raw('DATE(trade_date)'))
-            ->get();
-
-        $output = [];
-        foreach ($results as $row) {
-            $output[$row->trade_date] = [
-                'available' => true,
-                'count' => (int) $row->record_count,
-            ];
-        }
-        return $output;
-    }
-
-    private function getUinSettlementByDate(string $startDate, string $endDate): array
-    {
-        $results = DB::table('uin_settlement_data')
-            ->selectRaw("DATE(settlement_date) as settlement_date, COUNT(DISTINCT stock_id) as stock_count")
-            ->whereBetween('settlement_date', [$startDate, $endDate])
-            ->groupBy(DB::raw('DATE(settlement_date)'))
-            ->orderBy(DB::raw('DATE(settlement_date)'))
-            ->get();
-
-        $output = [];
-        foreach ($results as $row) {
-            $output[$row->settlement_date] = [
-                'available' => true,
-                'count' => (int) $row->stock_count,
-            ];
-        }
-        return $output;
-    }
-
-    // ========== DETAIL QUERIES FOR SINGLE DATE ==========
-
-    private function getStockPricesDetail(string $date): bool
-    {
-        return DB::table('stock_prices')->whereDate('date', $date)->exists();
-    }
-
-    private function getIndicatorsDetail(string $date): bool
-    {
-        return DB::table('stock_indicators')->whereDate('date', $date)->exists();
-    }
-
-    private function getSignalsDetail(string $date): bool
-    {
-        return DB::table('stock_signals')->whereDate('signal_date', $date)->exists();
-    }
-
-    private function getFipiTradingDetail(string $date): bool
-    {
-        return DB::table('fipi_lipi_trading_data')->whereDate('trade_date', $date)->exists();
-    }
-
-    private function getFipiMarketDetail(string $date): bool
-    {
-        return DB::table('fipi_lipi_market_data')->whereDate('trade_date', $date)->exists();
-    }
-
-    private function getUinSettlementDetail(string $date): bool
-    {
-        return DB::table('uin_settlement_data')->whereDate('settlement_date', $date)->exists();
-    }
-
-    // ========== HELPER METHODS ==========
-
-    private function calculateMonthlySummary(array $days): array
-    {
-        $healthyDays = 0;
-        $incompleteDays = 0;
-        $closedDays = 0;
-        $issueCount = 0;
-        $latestCompleteDate = null;
+        $summary = [
+            'tradingDays' => 0,
+            'completeDays' => 0,
+            'issueDays' => 0,
+            'pendingDays' => 0,
+            'closedWeekdays' => 0,
+            'datasets' => array_fill_keys(self::DATASETS, ['missingDays' => 0, 'partialDays' => 0, 'stockGaps' => 0]),
+        ];
 
         foreach ($days as $day) {
-            match ($day['status']) {
-                DataIntegrityStatus::STATUS_COMPLETE => $healthyDays++,
-                DataIntegrityStatus::STATUS_PARTIAL => $incompleteDays++,
-                DataIntegrityStatus::STATUS_WEEKEND, DataIntegrityStatus::STATUS_HOLIDAY => $closedDays++,
-                DataIntegrityStatus::STATUS_NO_DATA => $issueCount++,
-                default => null,
-            };
-
-            if ($day['status'] === DataIntegrityStatus::STATUS_COMPLETE) {
-                $latestCompleteDate = $day['date'];
+            if ($day['datasets'] === null) {
+                if ($day['status'] === 'closed') {
+                    $summary['closedWeekdays']++;
+                }
+                continue;
             }
 
-            if ($day['status'] === DataIntegrityStatus::STATUS_PARTIAL) {
-                $issueCount++;
+            $summary['tradingDays']++;
+            $summary[match ($day['status']) {
+                'complete' => 'completeDays',
+                'pending' => 'pendingDays',
+                default => 'issueDays',
+            }]++;
+
+            foreach ($day['datasets'] as $dataset => $cell) {
+                if ($cell['status'] === 'missing') {
+                    $summary['datasets'][$dataset]['missingDays']++;
+                } elseif ($cell['status'] === 'partial') {
+                    $summary['datasets'][$dataset]['partialDays']++;
+                }
+                $summary['datasets'][$dataset]['stockGaps'] += count($cell['missingSymbols']);
             }
         }
 
-        return [
-            'healthyDays' => $healthyDays,
-            'incompleteDays' => $incompleteDays,
-            'closedDays' => $closedDays,
-            'issueCount' => $issueCount,
-            'latestCompleteDate' => $latestCompleteDate,
-        ];
+        return $summary;
     }
 
-    private function determineDateStatusWithValidation(array $datasets, int $activeStocksCount, bool $isWeekend): string
+    /** Whole-history view per dataset: how fresh it is and which trading days it has never covered since it started. */
+    private function overview(): array
     {
-        // Weekend/closed market
-        if ($isWeekend) {
-            return DataIntegrityStatus::STATUS_WEEKEND;
-        }
+        return Cache::remember('data_integrity:daily:overview', self::CACHE_TTL, function () {
+            $datesByDataset = array_map(
+                fn (string $sql) => array_column(DB::select($sql), 'd'),
+                self::DATASET_DATES
+            );
+            $indexDates = array_column(DB::select("SELECT date::text AS d FROM index_prices GROUP BY date"), 'd');
 
-        $prices = $datasets[DataIntegrityStatus::DATASET_PRICES];
-        $indicators = $datasets[DataIntegrityStatus::DATASET_INDICATORS];
-        $signals = $datasets[DataIntegrityStatus::DATASET_SIGNALS];
-        $fipiTrading = $datasets[DataIntegrityStatus::DATASET_FIPI_TRADING];
-        $fipiMarket = $datasets[DataIntegrityStatus::DATASET_FIPI_MARKET];
-        $uin = $datasets[DataIntegrityStatus::DATASET_UIN_SETTLEMENT];
+            $calendar = array_unique(array_merge($datesByDataset['prices'], $indexDates));
+            rsort($calendar);
+            $latestTradingDate = $calendar[0] ?? null;
 
-        // Check if all 6 required datasets exist
-        $allPresent = $prices['available'] && $indicators['available'] && $signals['available'] &&
-                      $fipiTrading['available'] && $fipiMarket['available'] && $uin['available'];
+            $datasets = [];
+            foreach ($datesByDataset as $dataset => $dates) {
+                if (empty($dates)) {
+                    $datasets[$dataset] = ['firstDate' => null, 'latestDate' => null, 'upToDate' => false, 'missingDays' => 0, 'recentMissing' => []];
+                    continue;
+                }
 
-        // Check if prices and indicators counts match
-        $countsMatch = $prices['count'] === $indicators['count'];
+                $first = min($dates);
+                $latest = max($dates);
+                $present = array_flip($dates);
+                // The latest trading day is still being loaded, so it is reported as pending rather than missing.
+                $missing = array_values(array_filter(
+                    $calendar,
+                    fn ($d) => $d >= $first && $d < $latestTradingDate && !isset($present[$d])
+                ));
 
-        // COMPLETE: all datasets present AND prices == indicators
-        if ($allPresent && $countsMatch) {
-            return DataIntegrityStatus::STATUS_COMPLETE;
-        }
+                $datasets[$dataset] = [
+                    'firstDate' => $first,
+                    'latestDate' => $latest,
+                    'upToDate' => $latest >= $latestTradingDate,
+                    'missingDays' => count($missing),
+                    'recentMissing' => array_slice($missing, 0, self::RECENT_GAPS_LIMIT),
+                ];
+            }
 
-        // PARTIAL: any dataset missing OR prices != indicators
-        if ($prices['available'] || $indicators['available'] || $signals['available'] ||
-            $fipiTrading['available'] || $fipiMarket['available'] || $uin['available']) {
-            return DataIntegrityStatus::STATUS_PARTIAL;
-        }
-
-        // NO_DATA: no datasets on a trading day
-        return DataIntegrityStatus::STATUS_NO_DATA;
+            return ['latestTradingDate' => $latestTradingDate, 'datasets' => $datasets];
+        });
     }
 
-    private function identifyIssues(array $datasets, string $status): array
+    private function median(array $values): float
     {
-        if ($status === DataIntegrityStatus::STATUS_COMPLETE) {
-            return [];
+        if (empty($values)) {
+            return 0.0;
         }
+        sort($values);
+        $mid = intdiv(count($values), 2);
 
-        $prices = $datasets[DataIntegrityStatus::DATASET_PRICES];
-        $indicators = $datasets[DataIntegrityStatus::DATASET_INDICATORS];
-        $signals = $datasets[DataIntegrityStatus::DATASET_SIGNALS];
-        $fipiTrading = $datasets[DataIntegrityStatus::DATASET_FIPI_TRADING];
-        $fipiMarket = $datasets[DataIntegrityStatus::DATASET_FIPI_MARKET];
-        $uin = $datasets[DataIntegrityStatus::DATASET_UIN_SETTLEMENT];
-        $issues = [];
-
-        // Check for missing datasets
-        if (!$prices['available']) $issues[] = "Stock prices missing";
-        if (!$indicators['available']) $issues[] = "Indicators missing";
-        if (!$signals['available']) $issues[] = "Signals missing";
-        if (!$fipiTrading['available']) $issues[] = "FIPI trading missing";
-        if (!$fipiMarket['available']) $issues[] = "FIPI market missing";
-        if (!$uin['available']) $issues[] = "UIN settlement missing";
-
-        // Check price/indicator mismatch
-        if ($prices['available'] && $indicators['available'] && $prices['count'] !== $indicators['count']) {
-            $issues[] = "Prices ({$prices['count']}) vs Indicators ({$indicators['count']}) mismatch";
-        }
-
-        return $issues;
+        return count($values) % 2 ? (float) $values[$mid] : ($values[$mid - 1] + $values[$mid]) / 2;
     }
 }

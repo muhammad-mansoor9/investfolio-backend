@@ -144,11 +144,8 @@ Route::prefix('market-intelligence')->group(function () {
 // Data Integrity â€” public, throttled
 Route::prefix('data-integrity')->middleware('throttle:60,1')->group(function () {
     Route::get('/daily', [DataIntegrityController::class, 'getDailyIntegrity']);
-    Route::get('/daily/{date}', [DataIntegrityController::class, 'getDailyDetails']);
     Route::get('/financials', [DataIntegrityController::class, 'getFinancialIntegrity']);
-    Route::get('/financials/{stockId}/periods', [DataIntegrityController::class, 'getStockPeriodHistory']);
     Route::get('/financial-results', [DataIntegrityController::class, 'getFinancialResultsIntegrity']);
-    Route::get('/financial-results/{stockId}/periods', [DataIntegrityController::class, 'getFinancialResultsPeriodHistory']);
 });
 
 Route::prefix('performance')->group(function () {
