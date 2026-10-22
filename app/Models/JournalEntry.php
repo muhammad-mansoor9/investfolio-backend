@@ -13,6 +13,15 @@ class JournalEntry extends PgsqlModel
     protected $fillable = [
         'user_id',
         'content',
+        'tags',
+    ];
+
+    protected $casts = [
+        'tags' => 'array',
+    ];
+
+    protected $attributes = [
+        'tags' => '[]',
     ];
 
     public function user()

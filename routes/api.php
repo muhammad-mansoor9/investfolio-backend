@@ -14,6 +14,7 @@ use App\Http\Controllers\API\FIPILIPITradingController;
 use App\Http\Controllers\API\IndexController;
 use App\Http\Controllers\API\InsiderTradingController;
 use App\Http\Controllers\API\JournalController;
+use App\Http\Controllers\API\AiSettingsController;
 use App\Http\Controllers\API\LandingPageController;
 use App\Http\Controllers\API\LatestResultsController;
 use App\Http\Controllers\API\PEAnalysisController;
@@ -238,8 +239,12 @@ Route::middleware(['auth:sanctum', 'abilities:web', 'active'])->group(function (
     Route::prefix('journal')->group(function () {
         Route::get('/entries', [JournalController::class, 'getEntries']);
         Route::post('/entries', [JournalController::class, 'storeEntry']);
+        Route::put('/entries/{id}', [JournalController::class, 'updateEntry']);
+        Route::delete('/entries/{id}', [JournalController::class, 'deleteEntry']);
+        Route::get('/tags', [JournalController::class, 'getTags']);
+        Route::get('/tag-suggestions', [JournalController::class, 'getTagSuggestions']);
         Route::get('/insights', [JournalController::class, 'getInsights']);
-        Route::post('/insights', [JournalController::class, 'requestInsight']);
+        Route::post('/insights', [JournalController::class, 'requestInsight'])->middleware('throttle:20,1');
     });
 
     Route::prefix('billing')->group(function () {
@@ -252,6 +257,14 @@ Route::middleware(['auth:sanctum', 'abilities:web', 'active'])->group(function (
         Route::post('change-plan', [BillingController::class, 'changePlan'])->middleware('throttle:5,1');
         Route::get('transactions', [BillingController::class, 'transactions']);
         Route::get('transactions/{id}/invoice', [BillingController::class, 'invoice'])->whereUuid('id')->middleware('throttle:20,1');
+    });
+
+    Route::prefix('settings/ai')->group(function () {
+        Route::get('/', [AiSettingsController::class, 'show']);
+        Route::put('/', [AiSettingsController::class, 'update']);
+        Route::delete('/', [AiSettingsController::class, 'destroy']);
+        Route::post('/test', [AiSettingsController::class, 'test'])->middleware('throttle:10,1');
+        Route::post('/models', [AiSettingsController::class, 'models'])->middleware('throttle:20,1');
     });
 });
 
