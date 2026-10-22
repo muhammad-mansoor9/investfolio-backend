@@ -58,9 +58,7 @@ Route::get('auth/email/verify/{id}/{hash}', [AuthController::class, 'verifyEmail
 
 // Landing Page â€” public
 Route::prefix('landing')->group(function () {
-    Route::post('contact-us', [LandingPageController::class, 'contactUs'])->middleware('throttle:5,1');
     Route::post('newsletter-signup', [LandingPageController::class, 'newsletterSignup'])->middleware('throttle:5,1');
-    Route::post('waitlist-signup', [LandingPageController::class, 'waitlistSignup'])->middleware('throttle:5,1');
     Route::get('stats', [LandingPageController::class, 'getStats']);
 });
 
