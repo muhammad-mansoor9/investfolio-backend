@@ -1,9 +1,11 @@
 <?php
 namespace App\Providers;
 
+use App\Http\Middleware\LogViewerBasicAuth;
 use Illuminate\Support\Facades\URL;
 use Illuminate\Support\ServiceProvider;
 use Laravel\Sanctum\Sanctum;
+use Opcodes\LogViewer\Facades\LogViewer;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -24,5 +26,7 @@ class AppServiceProvider extends ServiceProvider
         if (str_starts_with(config('app.url'), 'https://')) {
             URL::forceScheme('https');
         }
+
+        LogViewer::auth(fn ($request) => LogViewerBasicAuth::passes($request));
     }
 }

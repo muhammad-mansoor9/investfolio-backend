@@ -20,6 +20,12 @@ return [
 
     'require_auth_in_production' => true,
 
+    // Checked by App\Http\Middleware\LogViewerBasicAuth; the viewer returns 404 while either is empty.
+    'basic_auth' => [
+        'username' => env('LOG_VIEWER_USERNAME'),
+        'password' => env('LOG_VIEWER_PASSWORD'),
+    ],
+
     /*
     |--------------------------------------------------------------------------
     | Log Viewer Domain
@@ -97,6 +103,7 @@ return [
 
     'middleware' => [
         'web',
+        \App\Http\Middleware\LogViewerBasicAuth::class,
         \Opcodes\LogViewer\Http\Middleware\AuthorizeLogViewer::class,
     ],
 
@@ -110,6 +117,7 @@ return [
     */
 
     'api_middleware' => [
+        \App\Http\Middleware\LogViewerBasicAuth::class,
         \Opcodes\LogViewer\Http\Middleware\EnsureFrontendRequestsAreStateful::class,
         \Opcodes\LogViewer\Http\Middleware\AuthorizeLogViewer::class,
     ],
