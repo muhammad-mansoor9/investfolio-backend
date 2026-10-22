@@ -57,37 +57,6 @@ class Trade extends PgsqlModel
                     }
                 }
             }
-
-            // Check if user has active subscription before creating trade
-            $user = null;
-            if ($model->user_id) {
-                $user = User::find($model->user_id);
-            } elseif ($model->portfolio_id) {
-                $portfolio = BasePortfolio::find($model->portfolio_id);
-                if ($portfolio) {
-                    $user = $portfolio->owners()->first();
-                }
-            }
-
-            if ($user) {
-                $subscription = UserSubscription::where('user_id', $user->id)
-                    ->whereIn('status', ['active', 'trial'])
-                    ->first();
-
-                if (!$subscription) {
-                    throw new \Exception('Active subscription required to add trades');
-                }
-
-                // Check if trial is expired
-                if ($subscription->isTrial() && $subscription->isTrialExpired()) {
-                    throw new \Exception('Trial subscription has expired. Please upgrade to continue adding trades');
-                }
-
-                // Check if subscription is expired
-                if ($subscription->isActive() && $subscription->isSubscriptionExpired()) {
-                    throw new \Exception('Subscription has expired. Please renew to continue adding trades');
-                }
-            }
         });
     }
 

@@ -1,15 +1,15 @@
-﻿<?php
+<?php
 
 namespace App\Models;
 
-use App\Traits\HasUuid;
-use Illuminate\Database\Eloquent\Factories\HasFactory;
-use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Concerns\HasUuids;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class SubscriptionPlanPrice extends PgsqlModel
 {
-    use HasUuid;
-    use HasFactory;
+    use HasUuids;
+
+    protected $table = 'subscription_plan_prices';
 
     protected $fillable = [
         'plan_id',
@@ -17,41 +17,39 @@ class SubscriptionPlanPrice extends PgsqlModel
         'price',
         'currency',
         'is_active',
-        'stripe_price_id',
-        'metadata'
+        'paddle_price_id',
+        'metadata',
     ];
 
     protected $casts = [
-        'price' => 'decimal:2',
+        'price' => 'float',
         'is_active' => 'boolean',
-        'metadata' => 'array'
+        'metadata' => 'array',
     ];
 
-    public function plan()
+    public function plan(): BelongsTo
     {
         return $this->belongsTo(SubscriptionPlan::class, 'plan_id');
     }
 
-    public function subscriptions()
+    public function isPurchasable(): bool
     {
-        return $this->hasMany(UserSubscription::class, 'plan_price_id');
+        return $this->is_active && $this->paddle_price_id !== null && $this->plan && !$this->plan->is_default && $this->plan->is_active;
     }
 
-    public function getBillingCycleLabelAttribute()
+    public function label(): string
     {
-        $labels = [
-            'monthly' => 'Monthly',
-            'quarterly' => 'Quarterly',
-            'semi_annual' => 'Semi-Annual',
-            'annual' => 'Annual'
+        return $this->plan->name . ' · ' . ucfirst(str_replace('_', '-', $this->billing_cycle));
+    }
+
+    public function toApiArray(): array
+    {
+        return [
+            'id' => $this->id,
+            'billing_cycle' => $this->billing_cycle,
+            'price' => $this->price,
+            'currency' => trim($this->currency),
+            'paddle_price_id' => $this->paddle_price_id,
         ];
-
-        return $labels[$this->billing_cycle] ?? $this->billing_cycle;
-    }
-
-    public function getFormattedPriceAttribute()
-    {
-        return number_format($this->price, 2);
     }
 }
-

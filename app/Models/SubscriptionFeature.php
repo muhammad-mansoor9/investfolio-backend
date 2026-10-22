@@ -1,31 +1,26 @@
-﻿<?php
+<?php
 
 namespace App\Models;
 
-use App\Traits\HasUuid;
-use Illuminate\Database\Eloquent\Factories\HasFactory;
-use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Concerns\HasUuids;
 
 class SubscriptionFeature extends PgsqlModel
 {
-    use HasUuid, HasFactory;
+    use HasUuids;
+
+    protected $table = 'subscription_features';
 
     protected $fillable = [
+        'feature_key',
         'name',
         'description',
-        'feature_key',
-        'status',
+        'icon',
+        'track_usage',
+        'sort_order',
     ];
 
     protected $casts = [
-        'status' => 'boolean',
+        'track_usage' => 'boolean',
+        'sort_order' => 'integer',
     ];
-
-    public function plans()
-    {
-        return $this->belongsToMany(SubscriptionPlan::class, 'subscription_plan_features')
-            ->withPivot('value_limit', 'is_enabled')
-            ->withTimestamps();
-    }
 }
-

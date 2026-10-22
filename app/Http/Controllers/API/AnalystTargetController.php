@@ -1,7 +1,9 @@
 <?php
 namespace App\Http\Controllers\API;
 
+use App\Exceptions\FeatureGateException;
 use App\Models\AnalystTarget;
+use App\Services\EntitlementService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -67,8 +69,10 @@ class AnalystTargetController extends BaseController
         }
     }
 
-    public function store(Request $request): JsonResponse
+    public function store(Request $request, EntitlementService $entitlements): JsonResponse
     {
+        $entitlements->assertCanUse(Auth::user(), 'analyst_targets');
+
         try {
             $validator = Validator::make($request->all(), [
                 'stock_id' => 'required|uuid',
@@ -116,7 +120,7 @@ class AnalystTargetController extends BaseController
         }
     }
 
-    public function updateStatus(Request $request, $id): JsonResponse
+    public function updateStatus(Request $request, EntitlementService $entitlements, $id): JsonResponse
     {
         try {
             $validator = Validator::make($request->all(), [
@@ -133,6 +137,11 @@ class AnalystTargetController extends BaseController
                 ->with('stock')
                 ->firstOrFail();
 
+            // Reactivating a target counts against the active-target limit just like creating one.
+            if ($request->status === 'ACTIVE' && $target->status !== 'ACTIVE') {
+                $entitlements->assertCanUse($user, 'analyst_targets');
+            }
+
             $updateData = ['status' => $request->status];
 
             if (in_array($request->status, ['SL_HIT', 'TP1_HIT', 'TP2_HIT']) && !$target->expiry_date) {
@@ -143,6 +152,8 @@ class AnalystTargetController extends BaseController
             $target->refresh();
 
             return $this->sendResponse($target, 'Status updated successfully');
+        } catch (FeatureGateException $e) {
+            throw $e;
         } catch (\Exception $e) {
             return $this->sendError('Update failed', ['error' => $e->getMessage()], 500);
         }

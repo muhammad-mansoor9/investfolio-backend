@@ -35,6 +35,9 @@ use App\Http\Controllers\API\VolumeController;
 use App\Http\Controllers\API\VolumeHistoryController;
 use App\Http\Controllers\API\MarketIntelligenceController;
 use App\Http\Controllers\API\DataIntegrityController;
+use App\Http\Controllers\API\BillingController;
+use App\Http\Controllers\API\PaddleWebhookController;
+use App\Http\Controllers\API\PlanController;
 use Illuminate\Support\Facades\Route;
 
 // Auth â€” public
@@ -184,6 +187,13 @@ Route::prefix('screener')->group(function () {
 
 Route::get('/broker-research', [BrokerResearchController::class, 'getBrokerResearch']);
 
+// Plans (public, for the pricing page) and the Paddle webhook (authenticated by its signature)
+Route::get('plans', [PlanController::class, 'index']);
+Route::post('paddle/webhook', [PaddleWebhookController::class, 'handle'])
+    ->name('paddle.webhook')
+    ->withoutMiddleware('throttle:api')
+    ->middleware('throttle:300,1');
+
 // Valuation calculator â€” public calculate, authenticated save/retrieve/delete
 Route::prefix('valuations')->group(function () {
     Route::post('/calculate', [ValuationController::class, 'calculate']);
@@ -196,9 +206,6 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('auth/sessions', [AuthController::class, 'sessions']);
     Route::delete('auth/sessions/{id}', [AuthController::class, 'revokeSession']);
     Route::get('user', [AuthController::class, 'user']);
-    Route::get('user/package-limits', function () {
-        return response()->json(['success' => true, 'data' => []]);
-    });
 
     Route::prefix('volume')->group(function () {
         Route::get('/analysis', [VolumeController::class, 'getVolumeAnalysis']);
@@ -226,6 +233,18 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/entries', [JournalController::class, 'storeEntry']);
         Route::get('/insights', [JournalController::class, 'getInsights']);
         Route::post('/insights', [JournalController::class, 'requestInsight']);
+    });
+
+    Route::prefix('billing')->group(function () {
+        Route::get('subscription', [BillingController::class, 'subscription']);
+        Route::post('checkout', [BillingController::class, 'checkout'])->middleware('throttle:10,1');
+        Route::post('sync', [BillingController::class, 'sync'])->middleware('throttle:20,1');
+        Route::post('portal', [BillingController::class, 'portal'])->middleware('throttle:10,1');
+        Route::post('cancel', [BillingController::class, 'cancel'])->middleware('throttle:5,1');
+        Route::post('resume', [BillingController::class, 'resume'])->middleware('throttle:5,1');
+        Route::post('change-plan', [BillingController::class, 'changePlan'])->middleware('throttle:5,1');
+        Route::get('transactions', [BillingController::class, 'transactions']);
+        Route::get('transactions/{id}/invoice', [BillingController::class, 'invoice'])->whereUuid('id')->middleware('throttle:20,1');
     });
 });
 

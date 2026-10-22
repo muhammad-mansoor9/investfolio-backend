@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
-use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
@@ -65,28 +64,25 @@ class User extends Authenticatable
         return 'string';
     }
 
-    // ── Subscription relations ────────────────────────────────────────────────
-
-    public function subscriptions(): HasMany
+    public function subscription(): HasOne
     {
-        return $this->hasMany(UserSubscription::class);
+        return $this->hasOne(UserSubscription::class);
     }
 
-    public function activeSubscription(): HasOne
+    public function ensureActiveSubscription(): UserSubscription
     {
-        return $this->hasOne(UserSubscription::class)
-            ->whereIn('status', ['active', 'trial'])
-            ->latest();
-    }
+        if ($this->subscription) {
+            return $this->subscription;
+        }
 
-    public function isPremium(): bool
-    {
-        return true;
-    }
+        $subscription = $this->subscription()->createOrFirst([], [
+            'plan_id' => SubscriptionPlan::default()->id,
+            'status' => 'active',
+            'starts_at' => now(),
+        ]);
+        $this->setRelation('subscription', $subscription);
 
-    public function ensureActiveSubscription(): static
-    {
-        return $this;
+        return $subscription;
     }
 
     /**

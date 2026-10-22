@@ -1,67 +1,44 @@
-﻿<?php
+<?php
 
 namespace App\Models;
 
-use App\Traits\HasUuid;
-use Investfolio\InvestfolioShared\Models\User;
-use Illuminate\Database\Eloquent\Factories\HasFactory;
-use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Concerns\HasUuids;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 class SubscriptionTransaction extends PgsqlModel
 {
-    use HasUuid, HasFactory, SoftDeletes;
+    use HasUuids, SoftDeletes;
+
+    protected $table = 'subscription_transactions';
 
     protected $fillable = [
         'subscription_id',
-        'payment_method_id',
         'user_id',
         'amount',
         'currency',
         'payment_status',
-        'transaction_reference',
+        'paddle_transaction_id',
+        'billing_period_start',
+        'billing_period_end',
         'invoice_number',
         'metadata',
     ];
 
     protected $casts = [
         'amount' => 'float',
+        'billing_period_start' => 'datetime',
+        'billing_period_end' => 'datetime',
         'metadata' => 'array',
     ];
 
-    public function subscription()
+    public function subscription(): BelongsTo
     {
         return $this->belongsTo(UserSubscription::class, 'subscription_id');
     }
 
-    public function user()
+    public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
     }
-
-    public function paymentMethod()
-    {
-        return $this->belongsTo(PaymentMethod::class, 'payment_method');
-    }
-
-    public function isPending()
-    {
-        return $this->payment_status === 'pending';
-    }
-
-    public function isCompleted()
-    {
-        return $this->payment_status === 'completed';
-    }
-
-    public function isFailed()
-    {
-        return $this->payment_status === 'failed';
-    }
-
-    public function isRefunded()
-    {
-        return $this->payment_status === 'refunded';
-    }
 }
-
