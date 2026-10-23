@@ -31,7 +31,7 @@ class AuthController extends BaseController
 
     private const GOOGLE_CODE_TTL_SECONDS = 60;
 
-    private const STATE_PATTERN = '/^[A-Za-z0-9_-]{16,128}$/';
+    private const GOOGLE_STATE_COOKIE = 'google_oauth_state';
 
     // Checked when the user doesn't exist so a failed login takes as long as a wrong password.
     private const DUMMY_PASSWORD_HASH = '$2y$10$KuvpUGDpTWChtSaWrCBBpuPbUXNGlR4F8d1ZL40T9Ll53bRfN8s/m';
@@ -104,42 +104,45 @@ class AuthController extends BaseController
         ]);
     }
 
-    public function googleRedirect(Request $request): RedirectResponse
+    public function googleRedirect(): RedirectResponse
     {
-        $state = (string) $request->query('state', '');
+        // There is no session: the anti-forgery state is bound to this browser by a short-lived httpOnly cookie
+        // and checked in the callback before the code is exchanged.
+        $state = Str::random(40);
 
-        if (!preg_match(self::STATE_PATTERN, $state)) {
-            return $this->redirectToCallback(['error' => 'google_failed']);
-        }
-
-        // Stateless (no session), so the frontend's nonce rides along as the OAuth state and is
-        // checked by the frontend when the callback hands it back.
-        return Socialite::driver('google')->stateless()->with(['state' => $state])->redirect();
+        return Socialite::driver('google')->stateless()->with(['state' => $state])->redirect()
+            ->withCookie(cookie(self::GOOGLE_STATE_COOKIE, $state, 10, '/api/auth/google', null, null, true, false, 'lax'));
     }
 
     public function googleCallback(Request $request): RedirectResponse
     {
-        $state = (string) $request->query('state', '');
-        $state = preg_match(self::STATE_PATTERN, $state) ? $state : '';
+        $expected = (string) $request->cookie(self::GOOGLE_STATE_COOKIE, '');
+        $state = $request->query('state');
+
+        if ($expected === '' || !is_string($state) || !hash_equals($expected, $state)) {
+            Log::warning('Google sign-in failed: missing or mismatched state');
+
+            return $this->redirectToCallback(['error' => 'invalid_state']);
+        }
 
         try {
             $googleUser = Socialite::driver('google')->stateless()->user();
         } catch (\Throwable $e) {
             Log::warning('Google sign-in failed', ['error' => $e->getMessage()]);
 
-            return $this->redirectToCallback(['error' => 'google_failed', 'state' => $state]);
+            return $this->redirectToCallback(['error' => 'google_failed']);
         }
 
         $email = self::normalizeEmail($googleUser->getEmail());
 
         if (!$email || !Arr::get($googleUser->user, 'email_verified')) {
-            return $this->redirectToCallback(['error' => 'email_unverified', 'state' => $state]);
+            return $this->redirectToCallback(['error' => 'email_unverified']);
         }
 
         $user = User::where('google_id', $googleUser->getId())->first() ?? self::findByEmail($email);
 
         if ($user && !$user->is_active) {
-            return $this->redirectToCallback(['error' => 'account_deactivated', 'state' => $state]);
+            return $this->redirectToCallback(['error' => 'account_deactivated']);
         }
 
         if ($user) {
@@ -159,7 +162,7 @@ class AuthController extends BaseController
         $code = Str::random(64);
         Cache::put(self::googleCodeKey($code), $user->id, self::GOOGLE_CODE_TTL_SECONDS);
 
-        return $this->redirectToCallback(['code' => $code, 'state' => $state]);
+        return $this->redirectToCallback(['code' => $code]);
     }
 
     public function googleExchange(Request $request): JsonResponse
@@ -397,7 +400,9 @@ class AuthController extends BaseController
 
     private function redirectToCallback(array $fragment): RedirectResponse
     {
-        return redirect(self::frontendUrl() . '/auth/callback#' . http_build_query($fragment));
+        // The Google state is single-use.
+        return redirect(self::frontendUrl() . '/auth/callback#' . http_build_query($fragment))
+            ->withoutCookie(self::GOOGLE_STATE_COOKIE, '/api/auth/google');
     }
 
     private function redirectToVerifyPage(string $status): RedirectResponse

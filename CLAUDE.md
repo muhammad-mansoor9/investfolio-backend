@@ -6,7 +6,7 @@ REST API for the PSX analysis platform.
 
 - **PHP** 8.1+ / **Laravel** 10
 - **Database**: PostgreSQL only (single database with two user roles: `postgres` for DDL, `psx_user` for runtime)
-- **Auth**: Laravel Sanctum personal access tokens (bearer only, no cookies); Google sign-in via Socialite (stateless). The `/admin` panel alone uses a session guard (`admin`)
+- **Auth**: Laravel Sanctum personal access tokens (bearer only; the only cookie is the short-lived Google sign-in state); Google sign-in via Socialite (stateless). The `/admin` panel alone uses a session guard (`admin`)
 - **Admin UI**: Filament 3.3 (Livewire 3)
 - **HTTP Client**: Guzzle 7
 - **Dev tools**: Laravel Pint (linter), Ignition (error pages), Sail (Docker), PHPUnit 10 + Mockery
@@ -109,7 +109,7 @@ Two Postgres users share the schema: `postgres` (DDL owner of most tables) and `
 
 Authenticated web routes sit in the `['auth:sanctum', 'abilities:web', 'active']` group. Web logins issue `psx-web` tokens (ability `web`, 30-day expiry, newest 5 kept); MCP connections issue non-expiring `mcp:*` tokens (ability `mcp`) that only the `/mcp` endpoint accepts — never prune or revoke them from auth flows. Most data-read routes are public.
 
-Email/password signups must verify their email (signed link → `GET /api/auth/email/verify/{id}/{hash}` → frontend `/auth/verify-email?status=`). Google sign-in hands the frontend a one-time code in the URL fragment (`/auth/callback#code=&state=`), exchanged at `POST /api/auth/google/exchange`; tokens never appear in URLs.
+Email/password signups must verify their email (signed link → `GET /api/auth/email/verify/{id}/{hash}` → frontend `/auth/verify-email?status=`). Google sign-in: `GET /api/auth/google/redirect` creates the OAuth state and binds it to the browser with a 10-minute httpOnly cookie (`google_oauth_state`, path `/api/auth/google`); the callback checks it before exchanging Google's code (`invalid_state` otherwise), then hands the frontend a one-time code in the URL fragment (`/auth/callback#code=`), exchanged at `POST /api/auth/google/exchange`; tokens never appear in URLs.
 
 ## Admin Panel (`/admin`)
 
