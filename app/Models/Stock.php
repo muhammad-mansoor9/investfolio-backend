@@ -4,8 +4,6 @@ declare(strict_types=1);
 
 namespace App\Models;
 
-
-
 use App\Traits\HasUuid;
 
 class Stock extends PgsqlModel
@@ -15,7 +13,7 @@ class Stock extends PgsqlModel
     protected $fillable = [
         'market_id', 'exchange_id', 'sector_id', 'asset_id',
         'symbol', 'description', 'is_shariah', 'is_active',
-        'market_cap', 'total_shares_outstanding', 'free_float', 'face_value'
+        'market_cap', 'total_shares_outstanding', 'free_float', 'face_value', 'year_ending',
     ];
 
     public function sector()

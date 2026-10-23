@@ -6,7 +6,8 @@ REST API for the PSX analysis platform.
 
 - **PHP** 8.1+ / **Laravel** 10
 - **Database**: PostgreSQL only (single database with two user roles: `postgres` for DDL, `psx_user` for runtime)
-- **Auth**: Laravel Sanctum personal access tokens (bearer only, no cookies); Google sign-in via Socialite (stateless)
+- **Auth**: Laravel Sanctum personal access tokens (bearer only, no cookies); Google sign-in via Socialite (stateless). The `/admin` panel alone uses a session guard (`admin`)
+- **Admin UI**: Filament 3.3 (Livewire 3)
 - **HTTP Client**: Guzzle 7
 - **Dev tools**: Laravel Pint (linter), Ignition (error pages), Sail (Docker), PHPUnit 10 + Mockery
 
@@ -109,6 +110,17 @@ Two Postgres users share the schema: `postgres` (DDL owner of most tables) and `
 Authenticated web routes sit in the `['auth:sanctum', 'abilities:web', 'active']` group. Web logins issue `psx-web` tokens (ability `web`, 30-day expiry, newest 5 kept); MCP connections issue non-expiring `mcp:*` tokens (ability `mcp`) that only the `/mcp` endpoint accepts — never prune or revoke them from auth flows. Most data-read routes are public.
 
 Email/password signups must verify their email (signed link → `GET /api/auth/email/verify/{id}/{hash}` → frontend `/auth/verify-email?status=`). Google sign-in hands the frontend a one-time code in the URL fragment (`/auth/callback#code=&state=`), exchanged at `POST /api/auth/google/exchange`; tokens never appear in URLs.
+
+## Admin Panel (`/admin`)
+
+Filament 3 panel for back-office work (`app/Filament/`, provider `app/Providers/Filament/AdminPanelProvider.php`). Admins live in `admins` / `admin_roles` and sign in through the session guard `admin` — separate from app users, who only hold Sanctum tokens.
+
+- **First admin**: `php artisan admin:create you@example.com` (prompts for a password, creates a "Super admin" role). Later admins and roles are managed in the panel.
+- **Roles**: `admin_roles.module_access` is `*` or a comma list of `App\Support\AdminModules` keys (`market`, `quality`, `customers`, `billing`, `system`). Resources and pages opt in with the `BelongsToAdminModule` trait + `$adminModule`.
+- **Data integrity** lives only here (Data quality → Daily coverage / Financial coverage), built on `app/Services/DataIntegrity/*`. There is no public API for it.
+- Styling is plain CSS in `public/admin-ui/admin.css` (no theme build). Filament 3 colour variables are comma RGB triplets: write `rgba(var(--primary-500), 0.1)`, not `rgb(var(--x) / 0.1)`.
+- The log viewer (`/log-viewer`) opens for a signed-in admin with System access, or HTTP Basic creds from env.
+- `composer` runs `filament:upgrade` after autoload dump, which republishes `public/css/filament` and `public/js/filament`.
 
 ## Adding a New Endpoint
 

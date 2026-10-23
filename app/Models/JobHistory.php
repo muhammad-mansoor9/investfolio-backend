@@ -2,52 +2,37 @@
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Builder;
 
 class JobHistory extends PgsqlModel
 {
-    protected $fillable = [
-        'job_name', 'status', 'started_at', 'finished_at', 'meta_data', 'error_message'
-    ];
+    public const STATUSES = ['running', 'success', 'failed', 'skipped'];
+
+    // A run still "running" after this long died without reporting back.
+    public const STALLED_AFTER_MINUTES = 120;
+
+    protected $table = 'jobs_history';
 
     protected $casts = [
-        'meta_data' => 'array',
-        'started_at' => 'datetime',
-        'finished_at' => 'datetime',
+        'run_date' => 'date',
+        'run_timestamp' => 'datetime',
+        'execution_time_seconds' => 'float',
+        'errors_count' => 'integer',
     ];
 
-    /**
-     * Get the announcement associated with this job history.
-     */
-    public function announcement()
+    public function scopeLatestPerScript(Builder $query): Builder
     {
-        if (isset($this->meta_data['announcement_id'])) {
-            return $this->belongsTo(Announcement::class, 'meta_data->announcement_id');
-        }
-        return null;
+        return $query->whereIn('id', fn ($sub) => $sub->from('jobs_history')->selectRaw('MAX(id)')->groupBy('script_name'));
     }
 
-    /**
-     * Scope a query to only include successful jobs.
-     */
-    public function scopeSuccessful($query)
+    public function isStalled(): bool
     {
-        return $query->where('status', 'success');
+        return $this->status === 'running'
+            && $this->run_timestamp->diffInMinutes(now()) > self::STALLED_AFTER_MINUTES;
     }
 
-    /**
-     * Scope a query to only include failed jobs.
-     */
-    public function scopeFailed($query)
+    public function displayStatus(): string
     {
-        return $query->where('status', 'error');
-    }
-
-    /**
-     * Scope a query to only include jobs of a specific type.
-     */
-    public function scopeOfType($query, $jobName)
-    {
-        return $query->where('job_name', $jobName);
+        return $this->isStalled() ? 'stalled' : $this->status;
     }
 }

@@ -37,7 +37,6 @@ use App\Http\Controllers\API\VolumeHistoryController;
 use App\Http\Controllers\API\MarketIntelligenceController;
 use App\Http\Controllers\API\McpConnectionController;
 use App\Http\Controllers\API\McpOAuthController;
-use App\Http\Controllers\API\DataIntegrityController;
 use App\Http\Controllers\API\BillingController;
 use App\Http\Controllers\API\PaddleWebhookController;
 use App\Http\Controllers\API\PlanController;
@@ -137,13 +136,6 @@ Route::prefix('market-intelligence')->group(function () {
     Route::get('/rotation-history', [MarketIntelligenceController::class, 'getRotationHistory']);
     Route::get('/stock-flow-history', [MarketIntelligenceController::class, 'getStockFlowHistory']);
     Route::get('/stock-detail', [MarketIntelligenceController::class, 'getStockDetail']);
-});
-
-// Data Integrity â€” public, throttled
-Route::prefix('data-integrity')->middleware('throttle:60,1')->group(function () {
-    Route::get('/daily', [DataIntegrityController::class, 'getDailyIntegrity']);
-    Route::get('/financials', [DataIntegrityController::class, 'getFinancialIntegrity']);
-    Route::get('/financial-results', [DataIntegrityController::class, 'getFinancialResultsIntegrity']);
 });
 
 Route::prefix('performance')->group(function () {

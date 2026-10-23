@@ -47,6 +47,16 @@ class SubscriptionPlan extends PgsqlModel
             ->orderByPivot('sort_order');
     }
 
+    public function planFeatures(): HasMany
+    {
+        return $this->hasMany(SubscriptionPlanFeature::class, 'plan_id');
+    }
+
+    public function subscriptions(): HasMany
+    {
+        return $this->hasMany(UserSubscription::class, 'plan_id');
+    }
+
     public function scopeActive(Builder $query): Builder
     {
         return $query->where('is_active', true);

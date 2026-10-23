@@ -67,7 +67,7 @@ class McpController extends BaseController
         return [
             'protocolVersion' => in_array($requested, self::PROTOCOL_VERSIONS, true) ? $requested : self::PROTOCOL_VERSIONS[0],
             'capabilities' => ['tools' => ['listChanged' => false]],
-            'serverInfo' => ['name' => 'psx-analysis', 'version' => '1.0.0'],
+            'serverInfo' => ['name' => 'Investfolio', 'version' => '1.0.0'],
             'instructions' => 'Market data for the Pakistan Stock Exchange (PSX), plus the signed-in user\'s own trading journal. '
                 . 'Market data tools are read-only. Journal tools read, create, update and delete the user\'s entries; only write when the user asks, and confirm before deleting. '
                 . 'Journal entries are tagged with PSX symbols and free-form labels; use list_journal_tags to see which exist. '
