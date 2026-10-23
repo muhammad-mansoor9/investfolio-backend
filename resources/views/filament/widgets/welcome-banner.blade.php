@@ -3,7 +3,7 @@
         <div class="psx-welcome-text">
             <p class="psx-welcome-date">{{ now('Asia/Karachi')->format('l, j F Y') }}</p>
             <h2>{{ $greeting }}{{ $name ? ', '.$name : '' }}</h2>
-            <p>Here is how the PSX platform is doing. The period filter changes the range of every chart.</p>
+            <p>Here is how Investfolio is doing. The period filter changes the range of every chart.</p>
         </div>
 
         <div class="psx-welcome-actions">

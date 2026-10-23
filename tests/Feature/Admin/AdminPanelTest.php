@@ -48,7 +48,7 @@ class AdminPanelTest extends TestCase
     public function test_guests_are_sent_to_the_admin_login(): void
     {
         $this->get('/admin')->assertRedirect('/admin/login');
-        $this->get('/admin/login')->assertOk()->assertSee('PSX Analysis');
+        $this->get('/admin/login')->assertOk()->assertSee('Investfolio');
     }
 
     public function test_an_admin_with_a_disabled_role_is_refused(): void

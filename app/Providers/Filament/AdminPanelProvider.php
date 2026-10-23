@@ -32,10 +32,10 @@ class AdminPanelProvider extends PanelProvider
             ->path('admin')
             ->login()
             ->authGuard('admin')
-            ->brandName('PSX Admin')
+            ->brandName('Investfolio Admin')
             ->brandLogo(fn () => view('filament.brand'))
             ->brandLogoHeight('2rem')
-            ->favicon(asset('admin-ui/logo.svg'))
+            ->favicon(asset('admin-ui/favicon.png'))
             ->font('Inter')
             ->colors([
                 'primary' => Color::Emerald,
